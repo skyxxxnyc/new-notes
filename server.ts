@@ -35,6 +35,17 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS page_versions (
+    id TEXT PRIMARY KEY,
+    pageId TEXT,
+    title TEXT,
+    content TEXT,
+    properties TEXT,
+    createdAt TEXT
+  )
+`);
+
 const defaultColumns = JSON.stringify([
   { id: "status", name: "Status", type: "select", width: 150, options: ["Todo", "In Progress", "Done"] },
   { id: "date", name: "Date", type: "date", width: 150 },
@@ -165,7 +176,12 @@ async function startServer() {
     const insert = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
     insert.run(id, title || "Untitled", content || "", properties || "{}", parentId || null, databaseId, isTemplate ? 1 : 0);
     
-    const newPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id);
+    const newPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id) as any;
+    
+    const versionId = uuidv4();
+    const insertVersion = db.prepare("INSERT INTO page_versions (id, pageId, title, content, properties, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
+    insertVersion.run(versionId, id, newPage.title, newPage.content, newPage.properties, new Date().toISOString());
+
     res.json(newPage);
   });
 
@@ -185,12 +201,24 @@ async function startServer() {
     `);
     
     update.run(title, content, properties, parentId, databaseId, isTemplate !== undefined ? (isTemplate ? 1 : 0) : null, id);
-    const updatedPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id);
+    const updatedPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id) as any;
+
+    const versionId = uuidv4();
+    const insertVersion = db.prepare("INSERT INTO page_versions (id, pageId, title, content, properties, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
+    insertVersion.run(versionId, id, updatedPage.title, updatedPage.content, updatedPage.properties, new Date().toISOString());
+
     res.json(updatedPage);
+  });
+
+  app.get("/api/pages/:id/versions", (req, res) => {
+    const { id } = req.params;
+    const versions = db.prepare("SELECT * FROM page_versions WHERE pageId = ? ORDER BY createdAt DESC").all(id);
+    res.json(versions);
   });
 
   app.delete("/api/pages/:id", (req, res) => {
     const { id } = req.params;
+    db.prepare("DELETE FROM page_versions WHERE pageId = ?").run(id);
     db.prepare("DELETE FROM pages WHERE parentId = ?").run(id);
     db.prepare("DELETE FROM pages WHERE id = ?").run(id);
     res.json({ success: true });

@@ -8,6 +8,7 @@ import {
   Download, Upload, LayoutGrid, List as ListIcon, Menu
 } from 'lucide-react';
 import Papa from 'papaparse';
+import TextareaAutosize from 'react-textarea-autosize';
 import RichTextEditor from './RichTextEditor';
 
 type Column = {
@@ -44,6 +45,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const [isLoading, setIsLoading] = useState(true);
   const [isEditingColumns, setIsEditingColumns] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'board'>('table');
+  const [attachments, setAttachments] = useState<any[]>([]);
 
   useEffect(() => {
     fetchDatabases();
@@ -108,6 +110,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
       setCurrentDatabaseId(newDb.id);
       setCurrentParentId(null);
       setSelectedEntry(null);
+      window.dispatchEvent(new CustomEvent('databases-changed'));
     } catch (error) {
       console.error('Failed to create database:', error);
     }
@@ -121,6 +124,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
+      window.dispatchEvent(new CustomEvent('databases-changed'));
     } catch (error) {
       console.error('Failed to update database:', error);
       fetchDatabases();
@@ -138,6 +142,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         setCurrentParentId(null);
         setSelectedEntry(null);
       }
+      window.dispatchEvent(new CustomEvent('databases-changed'));
     } catch (error) {
       console.error('Failed to delete database:', error);
     }
@@ -214,6 +219,20 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     } catch (error) {
       console.error('Failed to create template:', error);
     }
+  };
+
+  const handleAddAttachment = (file: File) => {
+    const newAttachment = {
+      id: Math.random().toString(36).substring(7),
+      name: file.name,
+      size: file.size,
+      type: file.type
+    };
+    setAttachments([...attachments, newAttachment]);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments(attachments.filter(a => a.id !== id));
   };
 
   const updatePage = async (id: string, updates: Partial<Page>) => {
@@ -298,6 +317,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             setCurrentDatabaseId(newDb.id);
             setCurrentParentId(null);
             setSelectedEntry(null);
+            window.dispatchEvent(new CustomEvent('databases-changed'));
           } else if (extension === 'csv') {
             Papa.parse(text, {
               header: true,
@@ -349,6 +369,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                 setCurrentDatabaseId(newDb.id);
                 setCurrentParentId(null);
                 setSelectedEntry(null);
+                window.dispatchEvent(new CustomEvent('databases-changed'));
               }
             });
           } else if (extension === 'md') {
@@ -797,12 +818,12 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     <Palette size={24} />
                     <span className="text-xs font-black uppercase tracking-[0.2em]">Project Note</span>
                   </div>
-                  <input 
-                    type="text"
+                  <TextareaAutosize 
                     value={selectedEntry.title}
                     onChange={(e) => updatePage(selectedEntry.id, { title: e.target.value })}
-                    className="text-2xl md:text-4xl font-black text-slate-900 leading-tight w-full outline-none bg-transparent placeholder-slate-300"
+                    className="text-2xl md:text-4xl font-black text-slate-900 leading-tight w-full outline-none bg-transparent placeholder-slate-300 resize-none"
                     placeholder="Untitled"
+                    minRows={1}
                   />
                 </div>
                 
@@ -829,15 +850,15 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                               {!col.options?.includes(props[col.id]) && props[col.id] && <option value={props[col.id]}>{props[col.id]}</option>}
                             </select>
                           ) : (
-                            <input 
-                              type="text"
+                            <TextareaAutosize 
                               value={props[col.id] || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
                                 updatePage(selectedEntry.id, { properties: JSON.stringify(newProps) });
                               }}
-                              className="text-sm text-slate-700 outline-none w-full bg-transparent"
+                              className="text-sm text-slate-700 outline-none w-full bg-transparent resize-none py-1"
                               placeholder="Empty"
+                              minRows={1}
                             />
                           )}
                         </div>
@@ -850,6 +871,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   <RichTextEditor 
                     content={selectedEntry.content || ''} 
                     onChange={(content) => updatePage(selectedEntry.id, { content })} 
+                    attachments={attachments}
+                    onAddAttachment={handleAddAttachment}
+                    onRemoveAttachment={handleRemoveAttachment}
                   />
                   
                   {!selectedEntry.isTemplate && (

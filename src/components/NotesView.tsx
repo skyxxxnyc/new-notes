@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Bold, Italic, List, ImageIcon, Link as LinkIcon, Share, MoreVertical, Maximize2, Sparkles, Menu, ChevronLeft } from 'lucide-react';
 import { generateNoteSummary, improveWriting } from '../lib/gemini';
+import RichTextEditor from './RichTextEditor';
 
 const MOCK_NOTES = [
   {
@@ -26,6 +27,7 @@ export default function NotesView({ onEnterFocus, onToggleSidebar }: { onEnterFo
   const [content, setContent] = useState(activeNote.content);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showListOnMobile, setShowListOnMobile] = useState(true);
+  const [attachments, setAttachments] = useState<any[]>([]);
 
   useEffect(() => {
     const handleNavigateNote = (e: any) => {
@@ -51,6 +53,20 @@ export default function NotesView({ onEnterFocus, onToggleSidebar }: { onEnterFo
     const summary = await generateNoteSummary(content);
     if (summary) alert(`AI Summary:\n\n${summary}`);
     setIsAiLoading(false);
+  };
+
+  const handleAddAttachment = (file: File) => {
+    const newAttachment = {
+      id: Math.random().toString(36).substring(7),
+      name: file.name,
+      size: file.size,
+      type: file.type
+    };
+    setAttachments([...attachments, newAttachment]);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments(attachments.filter(a => a.id !== id));
   };
 
   return (
@@ -100,13 +116,6 @@ export default function NotesView({ onEnterFocus, onToggleSidebar }: { onEnterFo
             <button onClick={() => setShowListOnMobile(true)} className="md:hidden p-2 -ml-2 text-slate-600 hover:text-primary">
               <ChevronLeft size={20} />
             </button>
-            <button className="text-slate-400 hover:text-primary transition-colors"><Bold size={18} /></button>
-            <button className="text-slate-400 hover:text-primary transition-colors"><Italic size={18} /></button>
-            <button className="text-slate-400 hover:text-primary transition-colors"><List size={18} /></button>
-            <div className="hidden md:block h-4 w-px bg-slate-200 mx-2"></div>
-            <button className="text-slate-400 hover:text-primary transition-colors"><ImageIcon size={18} /></button>
-            <button className="text-slate-400 hover:text-primary transition-colors"><LinkIcon size={18} /></button>
-            <div className="hidden md:block h-4 w-px bg-slate-200 mx-2"></div>
             
             {/* AI Tools */}
             <button 
@@ -145,10 +154,12 @@ export default function NotesView({ onEnterFocus, onToggleSidebar }: { onEnterFo
             </h1>
             <div className="h-1 w-24 bg-primary mb-8"></div>
             
-            <textarea 
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="w-full h-[500px] resize-none border-none p-0 text-base leading-relaxed text-slate-700 focus:ring-0 outline-none"
+            <RichTextEditor 
+              content={content}
+              onChange={setContent}
+              attachments={attachments}
+              onAddAttachment={handleAddAttachment}
+              onRemoveAttachment={handleRemoveAttachment}
             />
           </div>
         </div>

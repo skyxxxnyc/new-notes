@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  LayoutGrid, FileText, Calendar, Database, CheckSquare, Plus, X, Search, Settings
+  LayoutGrid, FileText, Calendar, Database, CheckSquare, Plus, X, Search, Settings, ChevronRight, ChevronDown
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -11,6 +11,50 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ currentView, setCurrentView, onOpenSearch, onOpenSettings }: SidebarProps) {
+  const [databases, setDatabases] = useState<any[]>([]);
+  const [isDatabasesExpanded, setIsDatabasesExpanded] = useState(true);
+
+  useEffect(() => {
+    fetchDatabases();
+    
+    // Listen for database changes
+    const handleDbChange = () => fetchDatabases();
+    window.addEventListener('databases-changed', handleDbChange);
+    return () => window.removeEventListener('databases-changed', handleDbChange);
+  }, []);
+
+  const fetchDatabases = async () => {
+    try {
+      const res = await fetch('/api/databases');
+      const data = await res.json();
+      setDatabases(data);
+    } catch (error) {
+      console.error('Failed to fetch databases:', error);
+    }
+  };
+
+  const handleCreateDatabase = async () => {
+    const name = prompt("Enter new database name:");
+    if (!name) return;
+    
+    try {
+      const res = await fetch('/api/databases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, icon: 'Database' })
+      });
+      const newDb = await res.json();
+      setDatabases([...databases, newDb]);
+      setCurrentView('database');
+      // Dispatch event to navigate to the new database
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('navigate-database', { detail: { id: newDb.id } }));
+      }, 100);
+    } catch (error) {
+      console.error('Failed to create database:', error);
+    }
+  };
+
   const navItems = [
     { id: 'dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'notes', icon: FileText, label: 'All Notes' },
@@ -53,18 +97,62 @@ export default function Sidebar({ currentView, setCurrentView, onOpenSearch, onO
           </button>
 
           {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setCurrentView(item.id)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                currentView === item.id 
-                  ? 'bg-primary/10 text-primary font-medium' 
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <item.icon size={20} />
-              <span className="text-sm">{item.label}</span>
-            </button>
+            <div key={item.id}>
+              <div
+                className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors group ${
+                  currentView === item.id && item.id !== 'database'
+                    ? 'bg-primary/10 text-primary font-medium' 
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <button
+                  onClick={() => setCurrentView(item.id)}
+                  className="flex items-center gap-3 flex-1 text-left"
+                >
+                  <item.icon size={20} />
+                  <span className="text-sm">{item.label}</span>
+                </button>
+                
+                {item.id === 'database' && (
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleCreateDatabase(); }}
+                      className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-primary"
+                      title="New Database"
+                    >
+                      <Plus size={14} />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setIsDatabasesExpanded(!isDatabasesExpanded); }}
+                      className="p-1 hover:bg-slate-200 rounded text-slate-400"
+                    >
+                      {isDatabasesExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                  </div>
+                )}
+              </div>
+              
+              {/* Database Sub-items */}
+              {item.id === 'database' && isDatabasesExpanded && databases.length > 0 && (
+                <div className="ml-6 mt-1 flex flex-col gap-0.5 border-l border-slate-200 pl-2">
+                  {databases.map(db => (
+                    <button
+                      key={db.id}
+                      onClick={() => {
+                        setCurrentView('database');
+                        setTimeout(() => {
+                          window.dispatchEvent(new CustomEvent('navigate-database', { detail: { id: db.id } }));
+                        }, 50);
+                      }}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors text-xs text-left truncate"
+                    >
+                      <Database size={12} className="shrink-0" />
+                      <span className="truncate">{db.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </nav>
         
