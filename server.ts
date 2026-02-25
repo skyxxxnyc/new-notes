@@ -36,6 +36,27 @@ db.exec(`
 `);
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    status TEXT,
+    capability TEXT,
+    systemPrompt TEXT,
+    config TEXT
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS agent_logs (
+    id TEXT PRIMARY KEY,
+    agentId TEXT,
+    action TEXT,
+    results TEXT,
+    createdAt TEXT
+  )
+`);
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS page_versions (
     id TEXT PRIMARY KEY,
     pageId TEXT,
@@ -61,7 +82,7 @@ if (countDbs.count === 0) {
   insertDb.run("db-2", "Engineering Tasks", "Code", defaultColumns);
 
   const insertPage = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
-  
+
   // Seed templates
   insertPage.run("tpl-1", "Bug Report Template", "<h2>Steps to Reproduce</h2><p>1. </p><h2>Expected Behavior</h2><p></p><h2>Actual Behavior</h2><p></p>", JSON.stringify({ status: "Todo", priority: "High" }), null, "db-2", 1);
   insertPage.run("tpl-2", "Design Spec Template", "<h2>Overview</h2><p></p><h2>Requirements</h2><ul><li></li></ul>", JSON.stringify({ status: "Todo", priority: "Medium" }), null, "db-1", 1);
@@ -86,6 +107,12 @@ if (countDashboards.count === 0) {
   insertDashboard.run("dash-1", "Home Dashboard", defaultWidgets);
 }
 
+const countAgents = db.prepare("SELECT COUNT(*) as count FROM agents").get() as { count: number };
+if (countAgents.count === 0) {
+  const insertAgent = db.prepare("INSERT INTO agents (id, name, status, capability, systemPrompt, config) VALUES (?, ?, ?, ?, ?, ?)");
+  insertAgent.run("agent-1", "Swiss Researcher", "idle", "Research & Summarization", "You are a professional research agent specializing in objective, high-density analysis. Your style is minimalist and Swiss.", JSON.stringify({ temperature: 0.1 }));
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -104,7 +131,7 @@ async function startServer() {
     const id = uuidv4();
     const insert = db.prepare("INSERT INTO databases (id, name, icon, columns) VALUES (?, ?, ?, ?)");
     insert.run(id, name || "Untitled Database", icon || "Database", defaultColumns);
-    
+
     const newDb = db.prepare("SELECT * FROM databases WHERE id = ?").get(id);
     res.json(newDb);
   });
@@ -112,24 +139,24 @@ async function startServer() {
   app.post("/api/databases/import", (req, res) => {
     const { database, pages } = req.body;
     const dbId = uuidv4();
-    
+
     const insertDb = db.prepare("INSERT INTO databases (id, name, icon, columns) VALUES (?, ?, ?, ?)");
     insertDb.run(dbId, (database.name || "Imported") + " (Imported)", database.icon || "Database", database.columns || "[]");
-    
+
     const insertPage = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    
+
     const idMap = new Map();
     if (pages && Array.isArray(pages)) {
       for (const page of pages) {
         idMap.set(page.id, uuidv4());
       }
-      
+
       for (const page of pages) {
         const newParentId = page.parentId ? idMap.get(page.parentId) : null;
         insertPage.run(idMap.get(page.id), page.title || "Untitled", page.content || "", page.properties || "{}", newParentId, dbId, page.isTemplate ? 1 : 0);
       }
     }
-    
+
     const newDb = db.prepare("SELECT * FROM databases WHERE id = ?").get(dbId);
     res.json(newDb);
   });
@@ -137,7 +164,7 @@ async function startServer() {
   app.put("/api/databases/:id", (req, res) => {
     const { id } = req.params;
     const { name, icon, columns } = req.body;
-    
+
     const update = db.prepare(`
       UPDATE databases 
       SET name = COALESCE(?, name),
@@ -145,7 +172,7 @@ async function startServer() {
           columns = COALESCE(?, columns)
       WHERE id = ?
     `);
-    
+
     update.run(name, icon, columns, id);
     const updatedDb = db.prepare("SELECT * FROM databases WHERE id = ?").get(id);
     res.json(updatedDb);
@@ -175,9 +202,9 @@ async function startServer() {
     const id = uuidv4();
     const insert = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
     insert.run(id, title || "Untitled", content || "", properties || "{}", parentId || null, databaseId, isTemplate ? 1 : 0);
-    
+
     const newPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id) as any;
-    
+
     const versionId = uuidv4();
     const insertVersion = db.prepare("INSERT INTO page_versions (id, pageId, title, content, properties, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
     insertVersion.run(versionId, id, newPage.title, newPage.content, newPage.properties, new Date().toISOString());
@@ -188,7 +215,7 @@ async function startServer() {
   app.put("/api/pages/:id", (req, res) => {
     const { id } = req.params;
     const { title, content, properties, parentId, databaseId, isTemplate } = req.body;
-    
+
     const update = db.prepare(`
       UPDATE pages 
       SET title = COALESCE(?, title),
@@ -199,7 +226,7 @@ async function startServer() {
           isTemplate = COALESCE(?, isTemplate)
       WHERE id = ?
     `);
-    
+
     update.run(title, content, properties, parentId, databaseId, isTemplate !== undefined ? (isTemplate ? 1 : 0) : null, id);
     const updatedPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id) as any;
 
@@ -235,7 +262,7 @@ async function startServer() {
     const id = uuidv4();
     const insert = db.prepare("INSERT INTO dashboards (id, name, widgets) VALUES (?, ?, ?)");
     insert.run(id, name || "Untitled Dashboard", widgets || "[]");
-    
+
     const newDashboard = db.prepare("SELECT * FROM dashboards WHERE id = ?").get(id);
     res.json(newDashboard);
   });
@@ -243,14 +270,14 @@ async function startServer() {
   app.put("/api/dashboards/:id", (req, res) => {
     const { id } = req.params;
     const { name, widgets } = req.body;
-    
+
     const update = db.prepare(`
       UPDATE dashboards 
       SET name = COALESCE(?, name),
           widgets = COALESCE(?, widgets)
       WHERE id = ?
     `);
-    
+
     update.run(name, widgets, id);
     const updatedDashboard = db.prepare("SELECT * FROM dashboards WHERE id = ?").get(id);
     res.json(updatedDashboard);
@@ -267,12 +294,33 @@ async function startServer() {
     if (!q) return res.json({ databases: [], pages: [], dashboards: [] });
 
     const searchPattern = `%${q}%`;
-    
+
     const databases = db.prepare("SELECT * FROM databases WHERE name LIKE ?").all(searchPattern);
     const pages = db.prepare("SELECT * FROM pages WHERE title LIKE ? OR content LIKE ?").all(searchPattern, searchPattern);
     const dashboards = db.prepare("SELECT * FROM dashboards WHERE name LIKE ?").all(searchPattern);
-    
+
     res.json({ databases, pages, dashboards });
+  });
+
+  // AI Agent Routes
+  app.get("/api/agents", (req, res) => {
+    const agents = db.prepare("SELECT * FROM agents").all();
+    res.json(agents);
+  });
+
+  app.post("/api/agents", (req, res) => {
+    const { name, capability, systemPrompt, config } = req.body;
+    const id = uuidv4();
+    const insert = db.prepare("INSERT INTO agents (id, name, status, capability, systemPrompt, config) VALUES (?, ?, ?, ?, ?, ?)");
+    insert.run(id, name, "idle", capability, systemPrompt, JSON.stringify(config || {}));
+    const newAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
+    res.json(newAgent);
+  });
+
+  app.get("/api/agents/:id/logs", (req, res) => {
+    const { id } = req.params;
+    const logs = db.prepare("SELECT * FROM agent_logs WHERE agentId = ? ORDER BY createdAt DESC").all(id);
+    res.json(logs);
   });
 
   // Vite middleware for development

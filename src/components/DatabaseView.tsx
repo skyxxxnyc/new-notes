@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import {
   Search, Filter, ArrowUpDown, Plus, MoreHorizontal,
-  X, Maximize2, CheckSquare, Square, PlusCircle, 
+  X, Maximize2, CheckSquare, Square, PlusCircle,
   Palette, Calendar, AlertCircle, User, CircleDot,
   ChevronRight, FileText, Trash2, Database as DatabaseIcon,
-  Settings, Type, Hash, AlignLeft, Edit2,
+  Settings, Type, Hash, AlignLeft, Edit2, Sparkles,
   Download, Upload, LayoutGrid, List as ListIcon, Menu
 } from 'lucide-react';
 import Papa from 'papaparse';
 import TextareaAutosize from 'react-textarea-autosize';
 import RichTextEditor from './RichTextEditor';
+import { runAiAction } from '../lib/gemini';
 
 type Column = {
   id: string;
@@ -17,6 +18,7 @@ type Column = {
   type: 'text' | 'select' | 'date' | 'number';
   width: number;
   options?: string[];
+  aiPrompt?: string; // Prompt for AI autofill
 };
 
 type Database = {
@@ -57,7 +59,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         setSelectedEntry(null);
       }
     };
-    
+
     const handleNavigatePage = (e: any) => {
       if (e.detail.databaseId) {
         setCurrentDatabaseId(e.detail.databaseId);
@@ -98,7 +100,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const createDatabase = async () => {
     const name = prompt("Enter new database name:");
     if (!name) return;
-    
+
     try {
       const res = await fetch('/api/databases', {
         method: 'POST',
@@ -133,7 +135,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
 
   const deleteDatabase = async (id: string) => {
     if (!confirm("Are you sure you want to delete this database and all its pages?")) return;
-    
+
     try {
       await fetch(`/api/databases/${id}`, { method: 'DELETE' });
       setDatabases(databases.filter(db => db.id !== id));
@@ -162,21 +164,21 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   };
 
   const createPage = async (
-    parentId: string | null = null, 
-    templateId: string | null = null, 
+    parentId: string | null = null,
+    templateId: string | null = null,
     initialProperties: string | null = null,
     titleOverride: string | null = null,
     contentOverride: string | null = null
   ) => {
     if (!currentDatabaseId) return;
-    
-    let initialData = { 
-      title: titleOverride || 'Untitled', 
-      content: contentOverride || '', 
-      properties: initialProperties || '{}', 
-      isTemplate: false 
+
+    let initialData = {
+      title: titleOverride || 'Untitled',
+      content: contentOverride || '',
+      properties: initialProperties || '{}',
+      isTemplate: false
     };
-    
+
     if (templateId) {
       const template = pages.find(p => p.id === templateId);
       if (template) {
@@ -296,17 +298,17 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     input.onchange = async (e: any) => {
       const file = e.target.files[0];
       if (!file) return;
-      
+
       const extension = file.name.split('.').pop()?.toLowerCase();
       const reader = new FileReader();
-      
+
       reader.onload = async (event) => {
         const text = event.target?.result as string;
         try {
           if (extension === 'json') {
             const data = JSON.parse(text);
             if (!data.database || !data.pages) throw new Error("Invalid format");
-            
+
             const res = await fetch('/api/databases/import', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -330,7 +332,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   type: 'text',
                   width: 150
                 }));
-                
+
                 const pagesData = results.data.map((row: any, index) => {
                   const titleCol = headers[0];
                   const title = titleCol && row[titleCol] ? row[titleCol] : `Row ${index + 1}`;
@@ -339,7 +341,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     const colId = h.toLowerCase().replace(/[^a-z0-9]/g, '-');
                     properties[colId] = row[h];
                   });
-                  
+
                   return {
                     id: `temp-${index}`,
                     title,
@@ -392,10 +394,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
 
   const currentDb = databases.find(db => db.id === currentDatabaseId);
   const columns: Column[] = currentDb && currentDb.columns ? JSON.parse(currentDb.columns) : [];
-  
+
   const currentPages = pages.filter(p => p.parentId === currentParentId && !p.isTemplate);
   const templates = pages.filter(p => p.isTemplate && p.databaseId === currentDatabaseId);
-  
+
   const breadcrumbs = [];
   let curr = currentParentId;
   while (curr) {
@@ -431,6 +433,29 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     updateDatabase(currentDb.id, { columns: JSON.stringify(columns.map(c => c.id === colId ? { ...c, name } : c)) });
   };
 
+  const setAiPrompt = (colId: string) => {
+    if (!currentDb) return;
+    const col = columns.find(c => c.id === colId);
+    if (!col) return;
+    const prompt = window.prompt("Enter AI Autofill Prompt (e.g., 'Summarize the content', 'Extract key metrics'):", col.aiPrompt || "");
+    updateDatabase(currentDb.id, { columns: JSON.stringify(columns.map(c => c.id === colId ? { ...c, aiPrompt: prompt || undefined } : c)) });
+  };
+
+  const handleAiAutofill = async (pageId: string, colId: string) => {
+    const page = pages.find(p => p.id === pageId);
+    const col = columns.find(c => c.id === colId);
+    if (!page || !col || !col.aiPrompt) return;
+
+    try {
+      const result = await runAiAction(col.aiPrompt, page.content, `Properties: ${page.properties}`);
+      const props = JSON.parse(page.properties || '{}');
+      props[colId] = result.trim();
+      updatePage(pageId, { properties: JSON.stringify(props) });
+    } catch (err) {
+      console.error("AI Autofill failed:", err);
+    }
+  };
+
   const getIconForType = (type: string) => {
     switch (type) {
       case 'text': return <AlignLeft size={14} />;
@@ -444,16 +469,16 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const getTaskProgress = (pageId: string) => {
     const subPages = pages.filter(p => p.parentId === pageId && !p.isTemplate);
     if (subPages.length === 0) return null;
-    
+
     const statusCol = columns.find(c => c.type === 'select' && (c.name.toLowerCase() === 'status' || c.id === 'status'));
     const statusId = statusCol?.id || 'status';
-    
+
     const completed = subPages.filter(p => {
       const props = JSON.parse(p.properties || '{}');
       const val = props[statusId]?.toLowerCase() || '';
       return val === 'done' || val === 'completed' || val === 'finished';
     }).length;
-    
+
     return {
       total: subPages.length,
       completed,
@@ -471,7 +496,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           <button onClick={onToggleSidebar} className="md:hidden mr-2 p-2 -ml-2 text-slate-600 hover:text-primary shrink-0">
             <Menu size={20} />
           </button>
-          <select 
+          <select
             className="bg-transparent text-slate-900 font-semibold outline-none cursor-pointer border-none hover:bg-slate-100 px-2 py-1 rounded transition-colors max-w-[120px] md:max-w-xs truncate shrink-0"
             value={currentDatabaseId || ''}
             onChange={(e) => {
@@ -484,7 +509,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
               <option key={db.id} value={db.id}>{db.name}</option>
             ))}
           </select>
-          <button 
+          <button
             onClick={createDatabase}
             className="ml-2 p-1 text-slate-400 hover:text-primary hover:bg-slate-100 rounded transition-colors"
             title="New Database"
@@ -492,7 +517,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             <Plus size={16} />
           </button>
           {currentDatabaseId && (
-            <button 
+            <button
               onClick={() => deleteDatabase(currentDatabaseId)}
               className="ml-1 p-1 text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded transition-colors"
               title="Delete Database"
@@ -504,7 +529,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           {breadcrumbs.length > 0 && (
             <>
               <span className="mx-2 text-slate-300">/</span>
-              <span 
+              <span
                 className="hover:text-slate-900 cursor-pointer transition-colors"
                 onClick={() => setCurrentParentId(null)}
               >
@@ -516,7 +541,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           {breadcrumbs.map(bc => (
             <React.Fragment key={bc.id}>
               <ChevronRight size={14} className="mx-1 text-slate-300 shrink-0" />
-              <span 
+              <span
                 className="hover:text-slate-900 cursor-pointer transition-colors truncate max-w-[100px] md:max-w-[150px] shrink-0"
                 onClick={() => setCurrentParentId(bc.id)}
               >
@@ -537,9 +562,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           </div>
           <div className="relative flex-1 md:flex-none">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Search entries..." 
+            <input
+              type="text"
+              placeholder="Search entries..."
               className="pl-10 pr-4 py-1.5 text-sm bg-slate-100 border-none rounded-lg focus:ring-2 focus:ring-primary w-full md:w-64 outline-none"
             />
           </div>
@@ -552,21 +577,21 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             {currentParentId ? breadcrumbs[breadcrumbs.length - 1]?.title : currentDb?.name || 'Database'}
           </h1>
           <p className="text-slate-500 max-w-2xl text-sm md:text-base">
-            {currentParentId 
-              ? 'Nested pages and tasks for this project.' 
+            {currentParentId
+              ? 'Nested pages and tasks for this project.'
               : 'A high-density structured view of tasks, updates, and notes.'}
           </p>
         </div>
 
         <div className="px-4 md:px-8 border-b border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between py-4 sticky top-0 bg-white/90 backdrop-blur-md z-10 gap-4">
           <div className="flex items-center gap-4 w-full md:w-auto border-b md:border-b-0 border-slate-100 pb-2 md:pb-0">
-            <button 
+            <button
               onClick={() => setViewMode('table')}
               className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'table' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <ListIcon size={16} /> Table
             </button>
-            <button 
+            <button
               onClick={() => setViewMode('board')}
               className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'board' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
             >
@@ -574,26 +599,26 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             </button>
           </div>
           <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-end">
-            <button 
+            <button
               onClick={() => setIsEditingColumns(!isEditingColumns)}
               className={`flex items-center gap-2 px-2 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-lg border transition-colors ${isEditingColumns ? 'bg-slate-100 border-slate-300 text-slate-900' : 'text-slate-600 hover:bg-slate-100 border-slate-200 bg-white'}`}
             >
               <Settings size={16} /> <span className="hidden md:inline">Columns</span>
             </button>
-            
+
             <div className="relative group">
-              <button 
+              <button
                 onClick={() => createPage(currentParentId)}
                 className="bg-primary text-white px-3 md:px-4 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1 md:gap-2 ml-2 hover:bg-primary/90 transition-colors shadow-sm"
               >
                 <Plus size={16} /> New Entry
               </button>
-              
+
               {/* Templates Dropdown */}
               <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 py-1">
                 <div className="px-3 py-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">Templates</div>
                 {templates.map(tpl => (
-                  <button 
+                  <button
                     key={tpl.id}
                     onClick={() => createPage(currentParentId, tpl.id)}
                     className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
@@ -603,7 +628,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   </button>
                 ))}
                 <div className="border-t border-slate-100 my-1"></div>
-                <button 
+                <button
                   onClick={createTemplate}
                   className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-slate-50 flex items-center gap-2"
                 >
@@ -629,6 +654,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                           {col.name}
                           {isEditingColumns && (
                             <div className="flex items-center gap-1 ml-auto">
+                              <button onClick={() => setAiPrompt(col.id)} className={`p-1 hover:bg-slate-200 rounded ${col.aiPrompt ? 'text-primary' : 'text-slate-400'}`} title="AI Autofill"><Sparkles size={12} /></button>
                               <button onClick={() => renameColumn(col.id)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit2 size={12} /></button>
                               <button onClick={() => removeColumn(col.id)} className="p-1 hover:bg-slate-200 rounded text-red-500"><Trash2 size={12} /></button>
                             </div>
@@ -654,8 +680,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                       const props = JSON.parse(entry.properties || '{}');
                       const progress = getTaskProgress(entry.id);
                       return (
-                        <tr 
-                          key={entry.id} 
+                        <tr
+                          key={entry.id}
                           className="hover:bg-slate-50 transition-colors group cursor-pointer"
                           onClick={() => setSelectedEntry(entry)}
                         >
@@ -682,12 +708,23 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                                   </span>
                                 ) : null
                               ) : (
-                                props[col.id] || ''
+                                <div className="flex items-center gap-2 group/cell">
+                                  <span className="truncate">{props[col.id] || ''}</span>
+                                  {col.aiPrompt && (
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleAiAutofill(entry.id, col.id); }}
+                                      className="p-1 hover:bg-primary/10 text-primary opacity-0 group-hover/cell:opacity-100 transition-opacity rounded"
+                                      title="Run AI Autofill"
+                                    >
+                                      <Sparkles size={12} />
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </td>
                           ))}
                           <td className="px-4 py-4 text-center">
-                            <button 
+                            <button
                               onClick={(e) => { e.stopPropagation(); deletePage(entry.id); }}
                               className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                             >
@@ -712,10 +749,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   <div key={status} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-2xl p-4 border border-slate-200/60">
                     <div className="flex items-center justify-between mb-4 px-1">
                       <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                        {status} 
+                        {status}
                         <span className="bg-slate-200 text-slate-600 text-xs py-0.5 px-2 rounded-full font-semibold">{columnPages.length}</span>
                       </h3>
-                      <button 
+                      <button
                         onClick={() => {
                           const initialProps = JSON.stringify({ [statusCol?.id || 'status']: status });
                           createPage(currentParentId, null, initialProps);
@@ -730,21 +767,21 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                         const props = JSON.parse(page.properties || '{}');
                         const progress = getTaskProgress(page.id);
                         return (
-                          <div 
-                            key={page.id} 
+                          <div
+                            key={page.id}
                             onClick={() => setSelectedEntry(page)}
                             className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-primary/40 transition-all group"
                           >
                             <div className="flex justify-between items-start mb-2">
                               <h4 className="font-bold text-slate-900 leading-tight pr-4">{page.title}</h4>
-                              <button 
+                              <button
                                 onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
                                 className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                               >
                                 <Trash2 size={14} />
                               </button>
                             </div>
-                            
+
                             <div className="flex flex-wrap gap-1.5 mt-3">
                               {columns.filter(c => c.id !== statusCol?.id && props[c.id]).map(col => (
                                 <span key={col.id} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-500 border border-slate-100 uppercase tracking-wider">
@@ -784,15 +821,15 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
       {/* Side-peek Overlay */}
       {selectedEntry && (
         <>
-          <div 
-            className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-20 transition-opacity" 
+          <div
+            className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-20 transition-opacity"
             onClick={() => setSelectedEntry(null)}
           />
           <div className="absolute inset-y-0 right-0 w-full md:w-[600px] bg-white border-l border-slate-200 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between px-4 md:px-8 py-4 border-b border-slate-100">
               <div className="flex items-center gap-4">
                 {!selectedEntry.isTemplate && (
-                  <button 
+                  <button
                     onClick={() => {
                       setCurrentParentId(selectedEntry.id);
                       setSelectedEntry(null);
@@ -818,7 +855,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     <Palette size={24} />
                     <span className="text-xs font-black uppercase tracking-[0.2em]">Project Note</span>
                   </div>
-                  <TextareaAutosize 
+                  <TextareaAutosize
                     value={selectedEntry.title}
                     onChange={(e) => updatePage(selectedEntry.id, { title: e.target.value })}
                     className="text-2xl md:text-4xl font-black text-slate-900 leading-tight w-full outline-none bg-transparent placeholder-slate-300 resize-none"
@@ -826,7 +863,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     minRows={1}
                   />
                 </div>
-                
+
                 <div className="grid grid-cols-1 gap-px bg-slate-100 rounded-xl overflow-hidden border border-slate-100">
                   {columns.map(col => {
                     const props = JSON.parse(selectedEntry.properties || '{}');
@@ -837,7 +874,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                         </div>
                         <div className="flex items-center">
                           {col.type === 'select' ? (
-                            <select 
+                            <select
                               value={props[col.id] || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
@@ -850,7 +887,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                               {!col.options?.includes(props[col.id]) && props[col.id] && <option value={props[col.id]}>{props[col.id]}</option>}
                             </select>
                           ) : (
-                            <TextareaAutosize 
+                            <TextareaAutosize
                               value={props[col.id] || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
@@ -868,14 +905,14 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                 </div>
 
                 <div className="space-y-6">
-                  <RichTextEditor 
-                    content={selectedEntry.content || ''} 
-                    onChange={(content) => updatePage(selectedEntry.id, { content })} 
+                  <RichTextEditor
+                    content={selectedEntry.content || ''}
+                    onChange={(content) => updatePage(selectedEntry.id, { content })}
                     attachments={attachments}
                     onAddAttachment={handleAddAttachment}
                     onRemoveAttachment={handleRemoveAttachment}
                   />
-                  
+
                   {!selectedEntry.isTemplate && (
                     <div className="space-y-3 pt-6 border-t border-slate-100">
                       <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Sub-pages (Tasks)</h3>
@@ -884,9 +921,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                           const subProps = JSON.parse(subPage.properties || '{}');
                           const statusId = statusCol?.id || 'status';
                           const isDone = subProps[statusId]?.toLowerCase() === 'done';
-                          
+
                           return (
-                            <div 
+                            <div
                               key={subPage.id}
                               className="flex items-center gap-3 group cursor-pointer p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-200 transition-all"
                               onClick={() => {
@@ -905,7 +942,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                           );
                         })}
                       </div>
-                      <button 
+                      <button
                         onClick={() => createPage(selectedEntry.id)}
                         className="flex items-center gap-2 text-sm font-bold text-primary hover:text-primary/80 transition-colors mt-2"
                       >

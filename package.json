@@ -14,6 +14,8 @@
     "@google/genai": "^1.29.0",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.14",
+    "@tiptap/extension-bubble-menu": "^3.20.0",
+    "@tiptap/extension-floating-menu": "^3.20.0",
     "@tiptap/extension-highlight": "^3.20.0",
     "@tiptap/extension-link": "^3.20.0",
     "@tiptap/extension-text-align": "^3.20.0",

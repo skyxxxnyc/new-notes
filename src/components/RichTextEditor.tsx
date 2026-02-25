@@ -1,18 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
+import BubbleMenuExtension from '@tiptap/extension-bubble-menu';
 import { Markdown } from 'tiptap-markdown';
 import debounce from 'lodash/debounce';
-import { 
-  Bold, Italic, Strikethrough, Underline as UnderlineIcon, 
-  List, ListOrdered, Quote, Heading1, Heading2, Heading3, 
-  Code, Undo, Redo, Link as LinkIcon, AlignLeft, AlignCenter, 
-  AlignRight, AlignJustify, Highlighter, Minus, Paperclip, File, X
+import { runAiAction } from '../lib/gemini';
+import {
+  Bold, Italic, Strikethrough, Underline as UnderlineIcon,
+  List, ListOrdered, Quote, Heading1, Heading2, Heading3,
+  Code, Undo, Redo, Link as LinkIcon, AlignLeft, AlignCenter,
+  AlignRight, AlignJustify, Highlighter, Minus, Paperclip, File, X,
+  Sparkles, Languages, Type, Shrink, Expand, Wand2
 } from 'lucide-react';
+
+const AiActionButton = ({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick: () => void }) => (
+  <button
+    onClick={onClick}
+    className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-white/10 hover:text-white transition-colors text-left w-full"
+  >
+    {icon}
+    <span>{label}</span>
+  </button>
+);
 
 interface Attachment {
   id: string;
@@ -29,12 +43,12 @@ interface RichTextEditorProps {
   onRemoveAttachment?: (id: string) => void;
 }
 
-export default function RichTextEditor({ 
-  content, 
-  onChange, 
-  attachments = [], 
-  onAddAttachment, 
-  onRemoveAttachment 
+export default function RichTextEditor({
+  content,
+  onChange,
+  attachments = [],
+  onAddAttachment,
+  onRemoveAttachment
 }: RichTextEditorProps) {
   const [isRawMode, setIsRawMode] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -61,6 +75,9 @@ export default function RichTextEditor({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight,
       Markdown,
+      BubbleMenuExtension.configure({
+        element: null, // We'll provide it in the component
+      }),
     ],
     content,
     onUpdate: ({ editor }) => {
@@ -110,7 +127,7 @@ export default function RichTextEditor({
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm transition-shadow focus-within:shadow-md focus-within:border-primary/50 flex flex-col">
       <div className="flex flex-col border-b border-slate-200 bg-slate-50/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center justify-between p-2 flex-wrap gap-y-2">
-          
+
           {/* History & Basic Formatting */}
           <div className="flex items-center gap-1">
             <div className="flex items-center bg-white border border-slate-200 rounded-md p-0.5 shadow-sm mr-2">
@@ -292,11 +309,11 @@ export default function RichTextEditor({
 
           {onAddAttachment && (
             <div className="flex items-center bg-white border border-slate-200 rounded-md p-0.5 shadow-sm ml-auto">
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileChange} 
-                className="hidden" 
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden"
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -311,7 +328,7 @@ export default function RichTextEditor({
           )}
         </div>
       </div>
-      
+
       {attachments.length > 0 && (
         <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2">
           {attachments.map(att => (
@@ -322,7 +339,7 @@ export default function RichTextEditor({
                 <span className="text-[10px] text-slate-400">{formatFileSize(att.size)}</span>
               </div>
               {onRemoveAttachment && (
-                <button 
+                <button
                   onClick={() => onRemoveAttachment(att.id)}
                   className="ml-1 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
                 >
@@ -347,7 +364,89 @@ export default function RichTextEditor({
             placeholder="Write markdown here..."
           />
         ) : (
-          <EditorContent editor={editor} className="min-h-[300px] flex-1 cursor-text" onClick={() => editor.commands.focus()} />
+          <>
+            <BubbleMenu
+              editor={editor}
+              options={{ placement: 'top', offset: 8 }}
+              className="flex items-center gap-1 bg-slate-900 text-white p-1 rounded-lg shadow-xl border border-white/10"
+            >
+              <div className="flex items-center gap-0.5 border-r border-white/10 pr-1 mr-1">
+                <button
+                  onClick={() => editor.chain().focus().toggleBold().run()}
+                  className={`p-1.5 rounded hover:bg-white/10 ${editor.isActive('bold') ? 'text-primary' : 'text-white'}`}
+                >
+                  <Bold size={14} />
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().toggleItalic().run()}
+                  className={`p-1.5 rounded hover:bg-white/10 ${editor.isActive('italic') ? 'text-primary' : 'text-white'}`}
+                >
+                  <Italic size={14} />
+                </button>
+              </div>
+
+              {/* AI ACTIONS */}
+              <div className="flex items-center gap-1 px-1 group relative">
+                <button
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded bg-primary/20 text-primary-light hover:bg-primary/30 transition-colors text-xs font-bold"
+                  title="AI Actions"
+                >
+                  <Sparkles size={14} className="animate-pulse" />
+                  Ask AI
+                </button>
+
+                <div className="absolute bottom-full left-0 mb-2 hidden group-hover:flex flex-col bg-slate-900 border border-white/10 rounded-lg shadow-2xl min-w-[180px] overflow-hidden">
+                  <AiActionButton
+                    icon={<Wand2 size={14} />}
+                    label="Improve Writing"
+                    onClick={async () => {
+                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+                      const result = await runAiAction('improve', text);
+                      editor.chain().focus().insertContent(result).run();
+                    }}
+                  />
+                  <AiActionButton
+                    icon={<Shrink size={14} />}
+                    label="Summarize"
+                    onClick={async () => {
+                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+                      const result = await runAiAction('summarize', text);
+                      editor.chain().focus().insertContent(result).run();
+                    }}
+                  />
+                  <AiActionButton
+                    icon={<Languages size={14} />}
+                    label="Translate to English"
+                    onClick={async () => {
+                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+                      const result = await runAiAction('translate', text);
+                      editor.chain().focus().insertContent(result).run();
+                    }}
+                  />
+                  <AiActionButton
+                    icon={<Type size={14} />}
+                    label="Make Professional"
+                    onClick={async () => {
+                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+                      const result = await runAiAction('professional', text);
+                      editor.chain().focus().insertContent(result).run();
+                    }}
+                  />
+                  <AiActionButton
+                    icon={<Sparkles size={14} />}
+                    label="Swiss Style"
+                    onClick={async () => {
+                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+                      const result = await runAiAction('swiss', text);
+                      editor.chain().focus().insertContent(result).run();
+                    }}
+                  />
+                </div>
+              </div>
+            </BubbleMenu>
+
+            <EditorContent editor={editor} className="min-h-[300px] flex-1 cursor-text" onClick={() => editor.commands.focus()} />
+          </>
         )}
       </div>
     </div>

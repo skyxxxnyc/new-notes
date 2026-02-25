@@ -13,6 +13,7 @@ import DatabaseView from './components/DatabaseView';
 import FocusMode from './components/FocusMode';
 import GlobalSearch from './components/GlobalSearch';
 import SettingsModal from './components/SettingsModal';
+import AiAgentChat from './components/AiAgentChat';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -63,7 +64,7 @@ export default function App() {
     <div className="flex h-screen w-full overflow-hidden bg-background-light relative">
       {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden transition-opacity"
           onClick={() => setIsSidebarOpen(false)}
         />
@@ -71,14 +72,14 @@ export default function App() {
 
       {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <Sidebar 
-          currentView={currentView} 
-          setCurrentView={(v) => { setCurrentView(v); setIsSidebarOpen(false); }} 
-          onOpenSearch={() => setIsSearchOpen(true)} 
+        <Sidebar
+          currentView={currentView}
+          setCurrentView={(v) => { setCurrentView(v); setIsSidebarOpen(false); }}
+          onOpenSearch={() => setIsSearchOpen(true)}
           onOpenSettings={() => setIsSettingsOpen(true)}
         />
       </div>
-      
+
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         {currentView === 'dashboard' && <DashboardView onToggleSidebar={() => setIsSidebarOpen(true)} />}
         {currentView === 'notes' && <NotesView onEnterFocus={() => setIsFocusMode(true)} onToggleSidebar={() => setIsSidebarOpen(true)} />}
@@ -87,16 +88,18 @@ export default function App() {
         {currentView === 'database' && <DatabaseView onToggleSidebar={() => setIsSidebarOpen(true)} />}
       </div>
 
-      <GlobalSearch 
-        isOpen={isSearchOpen} 
-        onClose={() => setIsSearchOpen(false)} 
-        onNavigate={handleNavigate} 
+      <GlobalSearch
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onNavigate={handleNavigate}
       />
 
-      <SettingsModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
       />
+
+      <AiAgentChat context={`Current view: ${currentView}`} />
     </div>
   );
 }

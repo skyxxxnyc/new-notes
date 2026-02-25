@@ -4,8 +4,8 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 const ResponsiveGridLayoutAny = ResponsiveGridLayout as any;
-import { 
-  LayoutDashboard, Plus, Settings, Trash2, Database as DatabaseIcon, 
+import {
+  LayoutDashboard, Plus, Settings, Trash2, Database as DatabaseIcon,
   FileText, CheckSquare, Maximize2, X, ListIcon, LayoutGrid, Circle, Square, Menu
 } from 'lucide-react';
 
@@ -101,7 +101,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
   const createDashboard = async () => {
     const name = prompt("Enter new dashboard name:");
     if (!name) return;
-    
+
     try {
       const res = await fetch('/api/dashboards', {
         method: 'POST',
@@ -132,7 +132,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
 
   const deleteDashboard = async (id: string) => {
     if (!confirm("Are you sure you want to delete this dashboard?")) return;
-    
+
     try {
       await fetch(`/api/dashboards/${id}`, { method: 'DELETE' });
       setDashboards(dashboards.filter(d => d.id !== id));
@@ -149,7 +149,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
 
   const onLayoutChange = (layout: any) => {
     if (!currentDashboard || !isEditing) return;
-    
+
     // Map layout changes back to widgets
     const newWidgets = widgets.map(w => {
       const l = layout.find((item: any) => item.i === w.i);
@@ -158,13 +158,13 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
       }
       return w;
     });
-    
+
     updateDashboard(currentDashboard.id, { widgets: JSON.stringify(newWidgets) });
   };
 
   const addWidget = (type: Widget['type'], databaseId?: string, viewMode?: 'table' | 'board') => {
     if (!currentDashboard) return;
-    
+
     const newWidget: Widget = {
       i: `w-${Date.now()}`,
       x: 0,
@@ -175,7 +175,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
       databaseId,
       viewMode
     };
-    
+
     updateDashboard(currentDashboard.id, { widgets: JSON.stringify([...widgets, newWidget]) });
     setShowAddWidget(false);
   };
@@ -190,20 +190,20 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
       // Just grab some recent pages that look like notes (no parent, not template)
       const recentNotes = pages.filter(p => !p.isTemplate && !p.parentId).slice(0, 5);
       return (
-        <div className="h-full flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50">
-            <FileText size={16} className="text-primary" />
-            <h3 className="font-bold text-sm text-slate-800">Recent Notes</h3>
+        <div className="h-full flex flex-col bg-white overflow-hidden">
+          <div className="px-5 py-3 border-b-2 border-black flex items-center gap-3 bg-white">
+            <FileText size={18} strokeWidth={2.5} className="text-black" />
+            <h3 className="font-black text-xs uppercase tracking-widest text-black">Archives</h3>
           </div>
-          <div className="p-2 flex-1 overflow-y-auto">
+          <div className="p-4 flex-1 overflow-y-auto">
             {recentNotes.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-slate-400 text-sm">No notes found</div>
+              <div className="h-full flex items-center justify-center text-slate-300 text-[10px] font-bold uppercase tracking-widest italic">No Data</div>
             ) : (
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-2">
                 {recentNotes.map(note => (
-                  <div key={note.id} className="px-3 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{note.title}</p>
-                    <p className="text-xs text-slate-400 truncate mt-0.5">{note.content.replace(/<[^>]+>/g, '') || 'Empty note'}</p>
+                  <div key={note.id} className="px-4 py-3 hover:bg-slate-50 border border-slate-100 cursor-pointer transition-all group">
+                    <p className="text-xs font-black text-black uppercase tracking-tight truncate group-hover:text-primary">{note.title}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase truncate mt-1">{note.content.replace(/<[^>]+>/g, '') || 'Status: Empty'}</p>
                   </div>
                 ))}
               </div>
@@ -216,28 +216,28 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
       // Find pages that have a status property
       const tasks = pages.filter(p => !p.isTemplate && p.properties.includes('status')).slice(0, 5);
       return (
-        <div className="h-full flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50">
-            <CheckSquare size={16} className="text-primary" />
-            <h3 className="font-bold text-sm text-slate-800">My Tasks</h3>
+        <div className="h-full flex flex-col bg-white overflow-hidden">
+          <div className="px-5 py-3 border-b-2 border-black flex items-center gap-3 bg-white">
+            <CheckSquare size={18} strokeWidth={2.5} className="text-black" />
+            <h3 className="font-black text-xs uppercase tracking-widest text-black">Action Items</h3>
           </div>
-          <div className="p-2 flex-1 overflow-y-auto">
+          <div className="p-4 flex-1 overflow-y-auto">
             {tasks.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-slate-400 text-sm">No tasks found</div>
+              <div className="h-full flex items-center justify-center text-slate-300 text-[10px] font-bold uppercase tracking-widest italic">No Data</div>
             ) : (
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-2">
                 {tasks.map(task => {
                   const props = JSON.parse(task.properties || '{}');
                   const isDone = props.status?.toLowerCase() === 'done';
                   return (
-                    <div key={task.id} className="px-3 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors flex items-start gap-3">
+                    <div key={task.id} className="px-4 py-3 hover:bg-slate-50 border border-slate-100 cursor-pointer transition-all flex items-start gap-4">
                       <div className="mt-0.5">
-                        {isDone ? <CheckSquare size={16} className="text-primary" /> : <Square size={16} className="text-slate-300" />}
+                        {isDone ? <CheckSquare size={18} strokeWidth={3} className="text-primary" /> : <Square size={18} strokeWidth={3} className="text-black" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-semibold truncate ${isDone ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{task.title}</p>
+                        <p className={`text-xs font-black uppercase tracking-tight truncate ${isDone ? 'text-slate-300 line-through' : 'text-black'}`}>{task.title}</p>
                         {props.status && (
-                          <span className="inline-block mt-1 px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-wider rounded">
+                          <span className="inline-block mt-2 px-2 py-0.5 bg-black text-white text-[9px] font-black uppercase tracking-widest">
                             {props.status}
                           </span>
                         )}
@@ -254,38 +254,38 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
     if (widget.type === 'database') {
       const db = databases.find(d => d.id === widget.databaseId);
       const dbPages = pages.filter(p => p.databaseId === widget.databaseId && !p.isTemplate && !p.parentId);
-      
+
       return (
-        <div className="h-full flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-            <div className="flex items-center gap-2">
-              <DatabaseIcon size={16} className="text-primary" />
-              <h3 className="font-bold text-sm text-slate-800">{db?.name || 'Unknown Database'}</h3>
-              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded">{widget.viewMode}</span>
+        <div className="h-full flex flex-col bg-white overflow-hidden">
+          <div className="px-5 py-3 border-b-2 border-black flex items-center justify-between bg-white">
+            <div className="flex items-center gap-3">
+              <DatabaseIcon size={18} strokeWidth={2.5} className="text-black" />
+              <h3 className="font-black text-xs uppercase tracking-widest text-black">{db?.name || 'Dataset'}</h3>
             </div>
+            <span className="text-[9px] uppercase tracking-widest font-black text-white bg-black px-2 py-1 italic">{widget.viewMode}</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-5">
             {widget.viewMode === 'table' ? (
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 {dbPages.slice(0, 5).map(page => (
-                  <div key={page.id} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded border border-slate-100">
-                    <span className="text-sm font-medium text-slate-700 truncate">{page.title}</span>
+                  <div key={page.id} className="flex items-center justify-between p-3 hover:bg-slate-50 border border-slate-100 transition-colors">
+                    <span className="text-[11px] font-black uppercase tracking-tight text-black truncate">{page.title}</span>
                   </div>
                 ))}
-                {dbPages.length === 0 && <div className="text-slate-400 text-sm text-center py-4">No entries</div>}
+                {dbPages.length === 0 && <div className="text-slate-300 text-[10px] font-black uppercase tracking-widest text-center py-8 italic">Dataset Empty</div>}
               </div>
             ) : (
-              <div className="flex gap-2 h-full">
+              <div className="flex gap-4 h-full">
                 {['Todo', 'In Progress', 'Done'].map(status => {
                   const colPages = dbPages.filter(p => {
                     const props = JSON.parse(p.properties || '{}');
                     return props.status === status;
                   });
                   return (
-                    <div key={status} className="flex-1 bg-slate-50 rounded p-2 flex flex-col gap-2">
-                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">{status}</h4>
+                    <div key={status} className="flex-1 border border-black p-3 flex flex-col gap-3">
+                      <h4 className="text-[9px] font-black text-black uppercase tracking-[0.2em] border-b border-black pb-2 italic">{status}</h4>
                       {colPages.slice(0, 3).map(page => (
-                        <div key={page.id} className="bg-white p-2 rounded border border-slate-200 shadow-sm text-xs font-medium text-slate-700 truncate">
+                        <div key={page.id} className="bg-white p-2 border border-slate-200 text-[10px] font-bold uppercase tracking-tight text-black truncate">
                           {page.title}
                         </div>
                       ))}
@@ -302,82 +302,91 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
   };
 
   return (
-    <main className="flex-1 flex flex-col min-w-0 bg-slate-50/50 relative overflow-hidden">
-      <header className="h-16 border-b border-slate-200 flex items-center justify-between px-4 md:px-8 bg-white sticky top-0 z-10">
-        <nav className="flex items-center text-sm font-medium text-slate-400">
-          <button 
+    <main className="flex-1 flex flex-col min-w-0 bg-white relative overflow-hidden">
+      <header className="h-20 border-b-2 border-black flex items-center justify-between px-6 md:px-10 bg-white sticky top-0 z-10">
+        <nav className="flex items-center text-sm font-black uppercase tracking-tighter">
+          <button
             onClick={onToggleSidebar}
-            className="md:hidden mr-2 p-2 -ml-2 text-slate-600 hover:text-primary"
+            className="md:hidden mr-4 p-2 -ml-2 text-black hover:text-primary transition-colors"
           >
-            <Menu size={20} />
+            <Menu size={24} strokeWidth={3} />
           </button>
-          <LayoutDashboard size={18} className="mr-2 text-primary hidden md:block" />
-          <select 
-            className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer border-none hover:bg-slate-100 px-2 py-1 rounded transition-colors max-w-[120px] md:max-w-xs truncate"
-            value={currentDashboardId || ''}
-            onChange={(e) => setCurrentDashboardId(e.target.value)}
-          >
-            {dashboards.map(db => (
-              <option key={db.id} value={db.id}>{db.name}</option>
-            ))}
-          </select>
-          <button 
-            onClick={createDashboard}
-            className="ml-2 p-1 text-slate-400 hover:text-primary hover:bg-slate-100 rounded transition-colors"
-            title="New Dashboard"
-          >
-            <Plus size={16} />
-          </button>
-          {currentDashboardId && (
-            <button 
-              onClick={() => deleteDashboard(currentDashboardId)}
-              className="ml-1 p-1 text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded transition-colors"
-              title="Delete Dashboard"
-            >
-              <Trash2 size={16} />
-            </button>
-          )}
+
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] bg-black text-white px-2 py-0.5 italic font-bold">MODE</span>
+              <select
+                className="bg-transparent text-black font-black outline-none cursor-pointer border-none hover:bg-slate-100 px-2 py-1 transition-colors max-w-[120px] md:max-w-xs truncate uppercase tracking-tight"
+                value={currentDashboardId || ''}
+                onChange={(e) => setCurrentDashboardId(e.target.value)}
+              >
+                {dashboards.map(db => (
+                  <option key={db.id} value={db.id}>{db.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={createDashboard}
+                className="p-1.5 border border-black text-black hover:bg-black hover:text-white transition-all"
+                title="New Dashboard"
+              >
+                <Plus size={18} strokeWidth={3} />
+              </button>
+              {currentDashboardId && (
+                <button
+                  onClick={() => deleteDashboard(currentDashboardId)}
+                  className="p-1.5 border border-black text-black hover:bg-primary hover:border-primary hover:text-white transition-all ml-1"
+                  title="Delete Dashboard"
+                >
+                  <Trash2 size={18} strokeWidth={3} />
+                </button>
+              )}
+            </div>
+          </div>
         </nav>
-        <div className="flex items-center gap-2 md:gap-3">
-          <button 
+
+        <div className="flex items-center gap-4">
+          <button
             onClick={() => setIsEditing(!isEditing)}
-            className={`flex items-center gap-2 px-2 md:px-3 py-1.5 text-xs md:text-sm font-bold rounded-lg transition-colors ${isEditing ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`px-6 py-2 text-xs font-black uppercase tracking-widest transition-all border-2 ${isEditing ? 'bg-primary border-primary text-white' : 'bg-black border-black text-white hover:bg-white hover:text-black'}`}
           >
-            {isEditing ? 'Done' : 'Edit'}
+            {isEditing ? 'Finalize' : 'Modify Layout'}
           </button>
-          
+
           {isEditing && (
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setShowAddWidget(!showAddWidget)}
-                className="flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1.5 text-xs md:text-sm font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors shadow-sm"
+                className="flex items-center gap-2 px-6 py-2 text-xs font-black uppercase tracking-widest bg-white border-2 border-black text-black hover:bg-black hover:text-white transition-all"
               >
-                <Plus size={16} /> <span className="hidden md:inline">Add Widget</span>
+                <Plus size={18} strokeWidth={3} /> <span>Components</span>
               </button>
-              
+
               {showAddWidget && (
-                <div className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                  <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Standard Widgets
+                <div className="absolute right-0 top-full mt-2 w-72 bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] z-50 overflow-hidden">
+                  <div className="px-4 py-3 bg-black text-[10px] font-black text-white uppercase tracking-[0.2em]">
+                    Core Modules
                   </div>
-                  <button onClick={() => addWidget('notes')} className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 border-b border-slate-50">
-                    <FileText size={16} className="text-slate-400" /> Notes List
+                  <button onClick={() => addWidget('notes')} className="w-full text-left px-5 py-4 text-xs font-black uppercase tracking-tight text-black hover:bg-primary hover:text-white flex items-center gap-4 border-b border-black transition-colors">
+                    <FileText size={18} strokeWidth={2.5} /> Notes Archive
                   </button>
-                  <button onClick={() => addWidget('tasks')} className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100">
-                    <CheckSquare size={16} className="text-slate-400" /> Task List
+                  <button onClick={() => addWidget('tasks')} className="w-full text-left px-5 py-4 text-xs font-black uppercase tracking-tight text-black hover:bg-primary hover:text-white flex items-center gap-4 border-b-2 border-black transition-colors">
+                    <CheckSquare size={18} strokeWidth={2.5} /> Task Control
                   </button>
-                  
-                  <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Database Views
+
+                  <div className="px-4 py-3 bg-black text-[10px] font-black text-white uppercase tracking-[0.2em]">
+                    Data Repositories
                   </div>
-                  <div className="max-h-48 overflow-y-auto">
+                  <div className="max-h-64 overflow-y-auto">
                     {databases.map(db => (
                       <React.Fragment key={db.id}>
-                        <button onClick={() => addWidget('database', db.id, 'table')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3">
-                          <ListIcon size={14} className="text-slate-400" /> {db.name} (Table)
+                        <button onClick={() => addWidget('database', db.id, 'table')} className="w-full text-left px-5 py-3 text-[11px] font-bold uppercase text-black hover:bg-slate-100 flex items-center gap-4 transition-colors">
+                          <ListIcon size={16} strokeWidth={2.5} /> {db.name} (Grid)
                         </button>
-                        <button onClick={() => addWidget('database', db.id, 'board')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 border-b border-slate-50">
-                          <LayoutGrid size={14} className="text-slate-400" /> {db.name} (Board)
+                        <button onClick={() => addWidget('database', db.id, 'board')} className="w-full text-left px-5 py-3 text-[11px] font-bold uppercase text-black hover:bg-slate-100 flex items-center gap-4 border-b border-slate-200 transition-colors">
+                          <LayoutGrid size={16} strokeWidth={2.5} /> {db.name} (Kanban)
                         </button>
                       </React.Fragment>
                     ))}
@@ -389,18 +398,20 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-8 md:p-12">
         {widgets.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-slate-400">
-            <LayoutDashboard size={48} className="mb-4 opacity-20" />
-            <p className="text-lg font-medium mb-2">This dashboard is empty</p>
-            <p className="text-sm mb-6">Click "Edit Layout" to add widgets.</p>
-            <button 
-              onClick={() => setIsEditing(true)}
-              className="px-4 py-2 bg-primary text-white rounded-lg font-bold text-sm shadow-sm"
-            >
-              Edit Layout
-            </button>
+          <div className="h-full flex flex-col items-center justify-center">
+            <div className="border-4 border-black p-10 flex flex-col items-center">
+              <LayoutDashboard size={80} strokeWidth={3} className="mb-6" />
+              <p className="text-2xl font-black uppercase tracking-tighter mb-2">Null State Detected</p>
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-8 italic">No components active in current viewport</p>
+              <button
+                onClick={() => setIsEditing(true)}
+                className="px-10 py-4 bg-black text-white font-black uppercase tracking-[0.2em] hover:bg-primary transition-colors"
+              >
+                Initialize Layout
+              </button>
+            </div>
           </div>
         ) : (
           <ResponsiveGridLayoutAny
@@ -408,21 +419,24 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
             layouts={{ lg: widgets }}
             breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
             cols={{ lg: 3, md: 3, sm: 2, xs: 1, xxs: 1 }}
-            rowHeight={150}
+            rowHeight={180}
             onLayoutChange={onLayoutChange}
             isDraggable={isEditing}
             isResizable={isEditing}
-            margin={[24, 24]}
+            margin={[32, 32]}
           >
             {widgets.map(widget => (
-              <div key={widget.i} className="relative group">
+              <div key={widget.i} className={`relative group border-2 border-black bg-white transition-all ${isEditing ? 'cursor-move' : ''}`}>
+                <div className="absolute -top-0.5 -left-0.5 bg-black text-white text-[9px] font-black px-1.5 py-0.5 z-10 uppercase tracking-widest">
+                  {widget.type}
+                </div>
                 {renderWidgetContent(widget)}
                 {isEditing && (
-                  <button 
+                  <button
                     onClick={() => removeWidget(widget.i)}
-                    className="absolute -top-2 -right-2 bg-red-500 text-white p-1.5 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                    className="absolute -top-3 -right-3 bg-primary text-white p-2 border-2 border-black hover:bg-black transition-all z-20"
                   >
-                    <X size={14} />
+                    <X size={16} strokeWidth={3} />
                   </button>
                 )}
               </div>
