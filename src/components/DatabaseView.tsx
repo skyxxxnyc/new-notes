@@ -1,24 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import {
+import { 
   Search, Filter, ArrowUpDown, Plus, MoreHorizontal,
-  X, Maximize2, CheckSquare, Square, PlusCircle,
+  X, Maximize2, CheckSquare, Square, PlusCircle, 
   Palette, Calendar, AlertCircle, User, CircleDot,
   ChevronRight, FileText, Trash2, Database as DatabaseIcon,
-  Settings, Type, Hash, AlignLeft, Edit2, Sparkles,
-  Download, Upload, LayoutGrid, List as ListIcon, Menu
+  Settings, Type, Hash, AlignLeft, Edit2,
+  Download, Upload, LayoutGrid, List as ListIcon, Menu, Link, Image, CalendarDays, Clock, Rss
 } from 'lucide-react';
 import Papa from 'papaparse';
 import TextareaAutosize from 'react-textarea-autosize';
 import RichTextEditor from './RichTextEditor';
-import { runAiAction } from '../lib/gemini';
+import { apiFetch } from '../lib/api';
 
-type Column = {
+  type Column = {
   id: string;
   name: string;
-  type: 'text' | 'select' | 'date' | 'number';
+  type: 'text' | 'select' | 'date' | 'number' | 'checkbox' | 'url';
   width: number;
   options?: string[];
-  aiPrompt?: string; // Prompt for AI autofill
+  visibleInBoard?: boolean;
 };
 
 type Database = {
@@ -45,9 +45,61 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const [selectedEntry, setSelectedEntry] = useState<Page | null>(null);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isEditingColumns, setIsEditingColumns] = useState(false);
-  const [viewMode, setViewMode] = useState<'table' | 'board'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'board' | 'gallery' | 'list' | 'calendar' | 'timeline' | 'feed'>('table');
   const [attachments, setAttachments] = useState<any[]>([]);
+  const [localColumns, setLocalColumns] = useState<Column[]>([]);
+  const [editingDbName, setEditingDbName] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [filterText, setFilterText] = useState('');
+  const [selectedRows, setSelectedRows] = useState<string[]>([]);
+
+  const toggleRowSelection = (id: string) => {
+    setSelectedRows(prev => prev.includes(id) ? prev.filter(rowId => rowId !== id) : [...prev, id]);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedRows.length === sortedAndFilteredPages.length) {
+      setSelectedRows([]);
+    } else {
+      setSelectedRows(sortedAndFilteredPages.map(page => page.id));
+    }
+  };
+
+  const bulkAssignUser = async (assignee: string) => {
+    const assigneeCol = localColumns.find(c => c.name.toLowerCase() === 'assignee');
+    if (!assigneeCol) return;
+    for (const id of selectedRows) {
+      const page = pages.find(p => p.id === id);
+      if (page) {
+        const props = JSON.parse(page.properties || '{}');
+        props[assigneeCol.id] = assignee;
+        await updatePage(page.id, { properties: JSON.stringify(props) });
+      }
+    }
+    setSelectedRows([]);
+  };
+
+  const bulkDelete = async () => {
+    if (!await window.appConfirm(`Delete ${selectedRows.length} entries?`)) return;
+    for (const id of selectedRows) {
+      await deletePage(id);
+    }
+    setSelectedRows([]);
+  };
+
+  const bulkUpdateStatus = async (status: string) => {
+    const statusCol = localColumns.find(c => c.name.toLowerCase() === 'status');
+    if (!statusCol) return;
+    for (const id of selectedRows) {
+      const page = pages.find(p => p.id === id);
+      if (page) {
+        const props = JSON.parse(page.properties || '{}');
+        props[statusCol.id] = status;
+        await updatePage(page.id, { properties: JSON.stringify(props) });
+      }
+    }
+    setSelectedRows([]);
+  };
 
   useEffect(() => {
     fetchDatabases();
@@ -59,7 +111,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         setSelectedEntry(null);
       }
     };
-
+    
     const handleNavigatePage = (e: any) => {
       if (e.detail.databaseId) {
         setCurrentDatabaseId(e.detail.databaseId);
@@ -86,28 +138,27 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
 
   const fetchDatabases = async () => {
     try {
-      const res = await fetch('/api/databases');
-      const data = await res.json();
+      const data = await apiFetch('/api/databases');
       setDatabases(data);
       if (data.length > 0 && !currentDatabaseId) {
         setCurrentDatabaseId(data[0].id);
+      } else if (data.length === 0) {
+        setIsLoading(false);
       }
     } catch (error) {
       console.error('Failed to fetch databases:', error);
+      setIsLoading(false);
     }
   };
 
   const createDatabase = async () => {
-    const name = prompt("Enter new database name:");
-    if (!name) return;
-
+    const name = "Untitled Database";
+    
     try {
-      const res = await fetch('/api/databases', {
+      const newDb = await apiFetch('/api/databases', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, icon: 'Database' })
       });
-      const newDb = await res.json();
       setDatabases([...databases, newDb]);
       setCurrentDatabaseId(newDb.id);
       setCurrentParentId(null);
@@ -121,9 +172,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const updateDatabase = async (id: string, updates: Partial<Database>) => {
     setDatabases(databases.map(db => db.id === id ? { ...db, ...updates } : db));
     try {
-      await fetch(`/api/databases/${id}`, {
+      await apiFetch(`/api/databases/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
       window.dispatchEvent(new CustomEvent('databases-changed'));
@@ -134,10 +184,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   };
 
   const deleteDatabase = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this database and all its pages?")) return;
-
+    if (!await window.appConfirm("Are you sure you want to delete this database and all its pages?")) return;
+    
     try {
-      await fetch(`/api/databases/${id}`, { method: 'DELETE' });
+      await apiFetch(`/api/databases/${id}`, { method: 'DELETE' });
       setDatabases(databases.filter(db => db.id !== id));
       if (currentDatabaseId === id) {
         setCurrentDatabaseId(databases[0]?.id || null);
@@ -153,8 +203,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const fetchPages = async (dbId: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/pages?databaseId=${dbId}`);
-      const data = await res.json();
+      const data = await apiFetch(`/api/pages?databaseId=${dbId}`);
       setPages(data);
     } catch (error) {
       console.error('Failed to fetch pages:', error);
@@ -164,21 +213,21 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   };
 
   const createPage = async (
-    parentId: string | null = null,
-    templateId: string | null = null,
+    parentId: string | null = null, 
+    templateId: string | null = null, 
     initialProperties: string | null = null,
     titleOverride: string | null = null,
     contentOverride: string | null = null
   ) => {
     if (!currentDatabaseId) return;
-
-    let initialData = {
-      title: titleOverride || 'Untitled',
-      content: contentOverride || '',
-      properties: initialProperties || '{}',
-      isTemplate: false
+    
+    let initialData = { 
+      title: titleOverride || 'Untitled', 
+      content: contentOverride || '', 
+      properties: initialProperties || '{}', 
+      isTemplate: false 
     };
-
+    
     if (templateId) {
       const template = pages.find(p => p.id === templateId);
       if (template) {
@@ -192,16 +241,15 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     }
 
     try {
-      const res = await fetch('/api/pages', {
+      const newPage = await apiFetch('/api/pages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...initialData, parentId, databaseId: currentDatabaseId })
       });
-      const newPage = await res.json();
       setPages([...pages, newPage]);
       if (parentId || !templateId) {
         setSelectedEntry(newPage);
       }
+      window.dispatchEvent(new CustomEvent('pages-changed'));
     } catch (error) {
       console.error('Failed to create page:', error);
     }
@@ -210,12 +258,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const createTemplate = async () => {
     if (!currentDatabaseId) return;
     try {
-      const res = await fetch('/api/pages', {
+      const newPage = await apiFetch('/api/pages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'New Template', content: '', properties: '{}', parentId: null, databaseId: currentDatabaseId, isTemplate: true })
       });
-      const newPage = await res.json();
       setPages([...pages, newPage]);
       setSelectedEntry(newPage);
     } catch (error) {
@@ -244,11 +290,11 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     }
 
     try {
-      await fetch(`/api/pages/${id}`, {
+      await apiFetch(`/api/pages/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
+      window.dispatchEvent(new CustomEvent('pages-changed'));
     } catch (error) {
       console.error('Failed to update page:', error);
       if (currentDatabaseId) fetchPages(currentDatabaseId);
@@ -262,7 +308,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     }
 
     try {
-      await fetch(`/api/pages/${id}`, { method: 'DELETE' });
+      await apiFetch(`/api/pages/${id}`, { method: 'DELETE' });
+      window.dispatchEvent(new CustomEvent('pages-changed'));
     } catch (error) {
       console.error('Failed to delete page:', error);
       if (currentDatabaseId) fetchPages(currentDatabaseId);
@@ -272,8 +319,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const exportDatabase = async () => {
     if (!currentDatabaseId || !currentDb) return;
     try {
-      const res = await fetch(`/api/pages?databaseId=${currentDatabaseId}`);
-      const dbPages = await res.json();
+      const dbPages = await apiFetch(`/api/pages?databaseId=${currentDatabaseId}`);
       const exportData = {
         database: currentDb,
         pages: dbPages
@@ -298,23 +344,21 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     input.onchange = async (e: any) => {
       const file = e.target.files[0];
       if (!file) return;
-
+      
       const extension = file.name.split('.').pop()?.toLowerCase();
       const reader = new FileReader();
-
+      
       reader.onload = async (event) => {
         const text = event.target?.result as string;
         try {
           if (extension === 'json') {
             const data = JSON.parse(text);
             if (!data.database || !data.pages) throw new Error("Invalid format");
-
-            const res = await fetch('/api/databases/import', {
+            
+            const newDb = await apiFetch('/api/databases/import', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(data)
             });
-            const newDb = await res.json();
             setDatabases([...databases, newDb]);
             setCurrentDatabaseId(newDb.id);
             setCurrentParentId(null);
@@ -332,7 +376,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   type: 'text',
                   width: 150
                 }));
-
+                
                 const pagesData = results.data.map((row: any, index) => {
                   const titleCol = headers[0];
                   const title = titleCol && row[titleCol] ? row[titleCol] : `Row ${index + 1}`;
@@ -341,7 +385,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     const colId = h.toLowerCase().replace(/[^a-z0-9]/g, '-');
                     properties[colId] = row[h];
                   });
-
+                  
                   return {
                     id: `temp-${index}`,
                     title,
@@ -361,12 +405,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   pages: pagesData
                 };
 
-                const res = await fetch('/api/databases/import', {
+                const newDb = await apiFetch('/api/databases/import', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(data)
                 });
-                const newDb = await res.json();
                 setDatabases([...databases, newDb]);
                 setCurrentDatabaseId(newDb.id);
                 setCurrentParentId(null);
@@ -394,10 +436,83 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
 
   const currentDb = databases.find(db => db.id === currentDatabaseId);
   const columns: Column[] = currentDb && currentDb.columns ? JSON.parse(currentDb.columns) : [];
+  
+  useEffect(() => {
+    if (columns && columns.length > 0 && !columns.some(c => c.id === 'title')) {
+      setLocalColumns([{ id: 'title', name: 'Title', type: 'text', width: 200 }, ...columns]);
+    } else if (columns && columns.length === 0) {
+      setLocalColumns([{ id: 'title', name: 'Title', type: 'text', width: 200 }]);
+    } else {
+      setLocalColumns(columns);
+    }
+  }, [currentDb?.columns]);
 
+  useEffect(() => {
+    if (currentDb) {
+      setEditingDbName(currentDb.name);
+    }
+  }, [currentDb?.id, currentDb?.name]);
+
+  const handleResizeStart = (e: React.MouseEvent, colId: string, currentWidth: number) => {
+    e.stopPropagation();
+    const startX = e.clientX;
+    
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const diff = moveEvent.clientX - startX;
+      const newWidth = Math.max(50, currentWidth + diff);
+      setLocalColumns(prev => prev.map(c => c.id === colId ? { ...c, width: newWidth } : c));
+    };
+    
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      setLocalColumns(prev => {
+        if (currentDb) updateDatabase(currentDb.id, { columns: JSON.stringify(prev) });
+        return prev;
+      });
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+  
   const currentPages = pages.filter(p => p.parentId === currentParentId && !p.isTemplate);
-  const templates = pages.filter(p => p.isTemplate && p.databaseId === currentDatabaseId);
+  
+  const sortedAndFilteredPages = React.useMemo(() => {
+    let result = [...currentPages];
+    
+    if (filterText) {
+      const lowerFilter = filterText.toLowerCase();
+      result = result.filter(p => {
+        if (p.title.toLowerCase().includes(lowerFilter)) return true;
+        const props = JSON.parse(p.properties || '{}');
+        return Object.values(props).some(v => String(v).toLowerCase().includes(lowerFilter));
+      });
+    }
 
+    if (sortConfig !== null) {
+      result.sort((a, b) => {
+        let aValue, bValue;
+        if (sortConfig.key === 'title') {
+          aValue = a.title;
+          bValue = b.title;
+        } else {
+          const aProps = JSON.parse(a.properties || '{}');
+          const bProps = JSON.parse(b.properties || '{}');
+          aValue = aProps[sortConfig.key] || '';
+          bValue = bProps[sortConfig.key] || '';
+        }
+        
+        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return result;
+  }, [currentPages, sortConfig, filterText]);
+
+  const templates = pages.filter(p => p.isTemplate && p.databaseId === currentDatabaseId);
+  
   const breadcrumbs = [];
   let curr = currentParentId;
   while (curr) {
@@ -410,50 +525,48 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     }
   }
 
-  const addColumn = () => {
+  const addColumn = async () => {
     if (!currentDb) return;
-    const name = prompt("Column Name:");
+    const name = await window.appPrompt("Column Name:");
     if (!name) return;
-    const newCol: Column = { id: name.toLowerCase().replace(/\s+/g, '-'), name, type: 'text', width: 150 };
-    updateDatabase(currentDb.id, { columns: JSON.stringify([...columns, newCol]) });
+    const newCol: Column = { id: name.toLowerCase().replace(/\s+/g, '-'), name, type: 'text', width: 150, visibleInBoard: true };
+    updateDatabase(currentDb.id, { columns: JSON.stringify([...localColumns, newCol]) });
   };
 
-  const removeColumn = (colId: string) => {
+  const toggleColumnVisibilityInBoard = async (colId: string) => {
     if (!currentDb) return;
-    if (!confirm("Remove this column?")) return;
-    updateDatabase(currentDb.id, { columns: JSON.stringify(columns.filter(c => c.id !== colId)) });
+    const updatedColumns = localColumns.map(col => 
+      col.id === colId ? { ...col, visibleInBoard: !col.visibleInBoard } : col
+    );
+    updateDatabase(currentDb.id, { columns: JSON.stringify(updatedColumns) });
   };
 
-  const renameColumn = (colId: string) => {
+  const removeColumn = async (colId: string) => {
     if (!currentDb) return;
-    const col = columns.find(c => c.id === colId);
+    if (!await window.appConfirm("Remove this column?")) return;
+    updateDatabase(currentDb.id, { columns: JSON.stringify(localColumns.filter(c => c.id !== colId)) });
+  };
+
+  const renameColumn = async (colId: string) => {
+    if (!currentDb) return;
+    const col = localColumns.find(c => c.id === colId);
     if (!col) return;
-    const name = prompt("New Column Name:", col.name);
+    const name = await window.appPrompt("New Column Name:", col.name);
     if (!name) return;
-    updateDatabase(currentDb.id, { columns: JSON.stringify(columns.map(c => c.id === colId ? { ...c, name } : c)) });
+    updateDatabase(currentDb.id, { columns: JSON.stringify(localColumns.map(c => c.id === colId ? { ...c, name } : c)) });
   };
 
-  const setAiPrompt = (colId: string) => {
+  const changeColumnType = (colId: string, type: Column['type']) => {
     if (!currentDb) return;
-    const col = columns.find(c => c.id === colId);
-    if (!col) return;
-    const prompt = window.prompt("Enter AI Autofill Prompt (e.g., 'Summarize the content', 'Extract key metrics'):", col.aiPrompt || "");
-    updateDatabase(currentDb.id, { columns: JSON.stringify(columns.map(c => c.id === colId ? { ...c, aiPrompt: prompt || undefined } : c)) });
+    updateDatabase(currentDb.id, { columns: JSON.stringify(localColumns.map(c => c.id === colId ? { ...c, type } : c)) });
   };
 
-  const handleAiAutofill = async (pageId: string, colId: string) => {
-    const page = pages.find(p => p.id === pageId);
-    const col = columns.find(c => c.id === colId);
-    if (!page || !col || !col.aiPrompt) return;
-
-    try {
-      const result = await runAiAction(col.aiPrompt, page.content, `Properties: ${page.properties}`);
-      const props = JSON.parse(page.properties || '{}');
-      props[colId] = result.trim();
-      updatePage(pageId, { properties: JSON.stringify(props) });
-    } catch (err) {
-      console.error("AI Autofill failed:", err);
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
     }
+    setSortConfig({ key, direction });
   };
 
   const getIconForType = (type: string) => {
@@ -462,6 +575,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
       case 'number': return <Hash size={14} />;
       case 'date': return <Calendar size={14} />;
       case 'select': return <CircleDot size={14} />;
+      case 'checkbox': return <CheckSquare size={14} />;
+      case 'url': return <Link size={14} />;
       default: return <Type size={14} />;
     }
   };
@@ -469,16 +584,16 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const getTaskProgress = (pageId: string) => {
     const subPages = pages.filter(p => p.parentId === pageId && !p.isTemplate);
     if (subPages.length === 0) return null;
-
-    const statusCol = columns.find(c => c.type === 'select' && (c.name.toLowerCase() === 'status' || c.id === 'status'));
+    
+    const statusCol = localColumns.find(c => c.type === 'select' && (c.name.toLowerCase() === 'status' || c.id === 'status'));
     const statusId = statusCol?.id || 'status';
-
+    
     const completed = subPages.filter(p => {
       const props = JSON.parse(p.properties || '{}');
       const val = props[statusId]?.toLowerCase() || '';
       return val === 'done' || val === 'completed' || val === 'finished';
     }).length;
-
+    
     return {
       total: subPages.length,
       completed,
@@ -486,8 +601,26 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     };
   };
 
-  const statusCol = columns.find(c => c.type === 'select' && (c.name.toLowerCase() === 'status' || c.id === 'status'));
+  const statusCol = localColumns.find(c => c.type === 'select' && (c.name.toLowerCase() === 'status' || c.id === 'status'));
   const statuses = statusCol?.options || ['Todo', 'In Progress', 'Done'];
+
+  if (!currentDatabaseId && !isLoading) {
+    return (
+      <main className="flex-1 flex flex-col min-w-0 bg-white items-center justify-center p-8">
+        <div className="text-center max-w-md">
+          <DatabaseIcon size={48} className="mx-auto text-slate-300 mb-4" />
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">No Databases</h2>
+          <p className="text-slate-500 mb-6">Create a database to start organizing your tasks, notes, and projects in a structured way.</p>
+          <button 
+            onClick={createDatabase}
+            className="bg-primary text-white px-6 py-3 rounded-xl font-bold hover:bg-primary/90 transition-colors shadow-sm flex items-center gap-2 mx-auto"
+          >
+            <Plus size={20} /> Create Database
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex-1 flex flex-col min-w-0 bg-white relative overflow-hidden">
@@ -496,7 +629,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           <button onClick={onToggleSidebar} className="md:hidden mr-2 p-2 -ml-2 text-slate-600 hover:text-primary shrink-0">
             <Menu size={20} />
           </button>
-          <select
+          <select 
             className="bg-transparent text-slate-900 font-semibold outline-none cursor-pointer border-none hover:bg-slate-100 px-2 py-1 rounded transition-colors max-w-[120px] md:max-w-xs truncate shrink-0"
             value={currentDatabaseId || ''}
             onChange={(e) => {
@@ -509,7 +642,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
               <option key={db.id} value={db.id}>{db.name}</option>
             ))}
           </select>
-          <button
+          <button 
             onClick={createDatabase}
             className="ml-2 p-1 text-slate-400 hover:text-primary hover:bg-slate-100 rounded transition-colors"
             title="New Database"
@@ -517,7 +650,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             <Plus size={16} />
           </button>
           {currentDatabaseId && (
-            <button
+            <button 
               onClick={() => deleteDatabase(currentDatabaseId)}
               className="ml-1 p-1 text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded transition-colors"
               title="Delete Database"
@@ -525,30 +658,6 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
               <Trash2 size={16} />
             </button>
           )}
-
-          {breadcrumbs.length > 0 && (
-            <>
-              <span className="mx-2 text-slate-300">/</span>
-              <span
-                className="hover:text-slate-900 cursor-pointer transition-colors"
-                onClick={() => setCurrentParentId(null)}
-              >
-                Root
-              </span>
-            </>
-          )}
-
-          {breadcrumbs.map(bc => (
-            <React.Fragment key={bc.id}>
-              <ChevronRight size={14} className="mx-1 text-slate-300 shrink-0" />
-              <span
-                className="hover:text-slate-900 cursor-pointer transition-colors truncate max-w-[100px] md:max-w-[150px] shrink-0"
-                onClick={() => setCurrentParentId(bc.id)}
-              >
-                {bc.title}
-              </span>
-            </React.Fragment>
-          ))}
         </nav>
         <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-end">
           <div className="flex items-center">
@@ -562,9 +671,11 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           </div>
           <div className="relative flex-1 md:flex-none">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input
-              type="text"
-              placeholder="Search entries..."
+            <input 
+              type="text" 
+              placeholder="Search entries..." 
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
               className="pl-10 pr-4 py-1.5 text-sm bg-slate-100 border-none rounded-lg focus:ring-2 focus:ring-primary w-full md:w-64 outline-none"
             />
           </div>
@@ -573,52 +684,105 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
 
       <div className="flex-1 overflow-y-auto bg-slate-50/30">
         <div className="px-4 md:px-8 pt-6 md:pt-10 pb-4 md:pb-6 max-w-7xl mx-auto w-full">
-          <h1 className="text-2xl md:text-4xl font-black tracking-tighter text-slate-900 mb-2 truncate">
-            {currentParentId ? breadcrumbs[breadcrumbs.length - 1]?.title : currentDb?.name || 'Database'}
-          </h1>
+          {breadcrumbs.length > 0 && (
+            <div className="flex items-center text-sm text-slate-500 mb-4">
+               <button onClick={() => setCurrentParentId(null)} className="hover:text-primary font-medium">Root</button>
+               {breadcrumbs.map(bc => (
+                 <React.Fragment key={bc.id}>
+                   <ChevronRight size={14} className="mx-1 text-slate-400" />
+                   <button onClick={() => setCurrentParentId(bc.id)} className="hover:text-primary font-medium">{bc.title}</button>
+                 </React.Fragment>
+               ))}
+            </div>
+          )}
+          {currentParentId ? (
+            <h1 className="text-2xl md:text-4xl font-black tracking-tighter text-slate-900 mb-2 truncate">
+              {breadcrumbs[breadcrumbs.length - 1]?.title}
+            </h1>
+          ) : (
+            <input
+              value={editingDbName}
+              onChange={(e) => setEditingDbName(e.target.value)}
+              onBlur={() => {
+                if (currentDb && editingDbName !== currentDb.name) {
+                  updateDatabase(currentDb.id, { name: editingDbName });
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur();
+                }
+              }}
+              className="text-2xl md:text-4xl font-black tracking-tighter text-slate-900 mb-2 truncate bg-transparent border-none outline-none focus:ring-0 p-0 w-full"
+              placeholder="Database Name"
+            />
+          )}
           <p className="text-slate-500 max-w-2xl text-sm md:text-base">
-            {currentParentId
-              ? 'Nested pages and tasks for this project.'
+            {currentParentId 
+              ? 'Nested pages and tasks for this project.' 
               : 'A high-density structured view of tasks, updates, and notes.'}
           </p>
         </div>
 
         <div className="px-4 md:px-8 border-b border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between py-4 sticky top-0 bg-white/90 backdrop-blur-md z-10 gap-4">
           <div className="flex items-center gap-4 w-full md:w-auto border-b md:border-b-0 border-slate-100 pb-2 md:pb-0">
-            <button
+            <button 
               onClick={() => setViewMode('table')}
               className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'table' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <ListIcon size={16} /> Table
             </button>
-            <button
+            <button 
               onClick={() => setViewMode('board')}
               className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'board' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <LayoutGrid size={16} /> Board
             </button>
+            <button 
+              onClick={() => setViewMode('gallery')}
+              className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'gallery' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Image size={16} /> Gallery
+            </button>
+            <button 
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'list' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <ListIcon size={16} /> List
+            </button>
+            <button 
+              onClick={() => setViewMode('calendar')}
+              className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'calendar' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <CalendarDays size={16} /> Calendar
+            </button>
+            <button 
+              onClick={() => setViewMode('timeline')}
+              className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'timeline' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Clock size={16} /> Timeline
+            </button>
+            <button 
+              onClick={() => setViewMode('feed')}
+              className={`flex items-center gap-2 text-sm font-semibold md:pb-4 md:-mb-4 transition-colors ${viewMode === 'feed' ? 'md:border-b-2 md:border-primary text-primary' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Rss size={16} /> Feed
+            </button>
           </div>
           <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-end">
-            <button
-              onClick={() => setIsEditingColumns(!isEditingColumns)}
-              className={`flex items-center gap-2 px-2 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-lg border transition-colors ${isEditingColumns ? 'bg-slate-100 border-slate-300 text-slate-900' : 'text-slate-600 hover:bg-slate-100 border-slate-200 bg-white'}`}
-            >
-              <Settings size={16} /> <span className="hidden md:inline">Columns</span>
-            </button>
-
             <div className="relative group">
-              <button
+              <button 
                 onClick={() => createPage(currentParentId)}
                 className="bg-primary text-white px-3 md:px-4 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1 md:gap-2 ml-2 hover:bg-primary/90 transition-colors shadow-sm"
               >
                 <Plus size={16} /> New Entry
               </button>
-
+              
               {/* Templates Dropdown */}
               <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 py-1">
                 <div className="px-3 py-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">Templates</div>
                 {templates.map(tpl => (
-                  <button
+                  <button 
                     key={tpl.id}
                     onClick={() => createPage(currentParentId, tpl.id)}
                     className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
@@ -628,7 +792,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   </button>
                 ))}
                 <div className="border-t border-slate-100 my-1"></div>
-                <button
+                <button 
                   onClick={createTemplate}
                   className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-slate-50 flex items-center gap-2"
                 >
@@ -641,90 +805,154 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         </div>
 
         <div className="px-4 md:px-8 py-6 max-w-7xl mx-auto w-full">
-          {viewMode === 'table' ? (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          {viewMode === 'table' && (
+            <>
+              {selectedRows.length > 0 && (
+                <div className="mb-4 p-3 bg-white border border-slate-200 rounded-xl shadow-sm flex items-center justify-between">
+                  <span className="text-sm font-medium text-slate-700">{selectedRows.length} selected</span>
+                  <div className="flex items-center gap-2">
+                    <button onClick={bulkDelete} className="text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2">
+                      <Trash2 size={16} /> Delete
+                    </button>
+                    <div className="h-4 w-px bg-slate-200"></div>
+                    <button onClick={() => bulkUpdateStatus('Done')} className="text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-sm font-medium">
+                      Mark Done
+                    </button>
+                    <button onClick={async () => {
+                      const assignee = await window.appPrompt("Enter Assignee Name:");
+                      if (assignee) bulkAssignUser(assignee);
+                    }} className="text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-sm font-medium">
+                      Assign
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest min-w-[200px]">Title</th>
-                    {columns.map(col => (
+                    <th className="w-10 px-4 py-3">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedRows.length === sortedAndFilteredPages.length && sortedAndFilteredPages.length > 0}
+                        onChange={toggleSelectAll}
+                        className="rounded border-slate-300 text-primary focus:ring-primary"
+                      />
+                    </th>
+                    {localColumns.map(col => (
                       <th key={col.id} className="px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest group relative" style={{ width: col.width }}>
                         <div className="flex items-center gap-1.5">
                           {getIconForType(col.type)}
-                          {col.name}
-                          {isEditingColumns && (
-                            <div className="flex items-center gap-1 ml-auto">
-                              <button onClick={() => setAiPrompt(col.id)} className={`p-1 hover:bg-slate-200 rounded ${col.aiPrompt ? 'text-primary' : 'text-slate-400'}`} title="AI Autofill"><Sparkles size={12} /></button>
+                          <span 
+                            className="truncate cursor-pointer hover:text-primary transition-colors flex items-center gap-1"
+                            onClick={() => handleSort(col.id)}
+                          >
+                            {col.name}
+                            {sortConfig?.key === col.id && (
+                              <ArrowUpDown size={12} className={sortConfig.direction === 'desc' ? 'rotate-180' : ''} />
+                            )}
+                          </span>
+                          {col.id !== 'title' && (
+                            <div className="flex items-center gap-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                              <select 
+                                className="text-[10px] bg-slate-100 border-none rounded px-1 py-0.5 outline-none cursor-pointer"
+                                value={col.type}
+                                onChange={(e) => changeColumnType(col.id, e.target.value as Column['type'])}
+                              >
+                                <option value="text">Text</option>
+                                <option value="number">Number</option>
+                                <option value="date">Date</option>
+                                <option value="select">Select</option>
+                                <option value="checkbox">Checkbox</option>
+                                <option value="url">URL</option>
+                              </select>
                               <button onClick={() => renameColumn(col.id)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit2 size={12} /></button>
                               <button onClick={() => removeColumn(col.id)} className="p-1 hover:bg-slate-200 rounded text-red-500"><Trash2 size={12} /></button>
                             </div>
                           )}
                         </div>
+                        <div 
+                          className="absolute right-0 top-0 bottom-0 w-4 translate-x-1/2 cursor-col-resize flex justify-center items-center group/resizer z-10"
+                          onMouseDown={(e) => handleResizeStart(e, col.id, col.width)}
+                        >
+                          <div className="w-1 h-full bg-transparent group-hover/resizer:bg-primary/50 group-active/resizer:bg-primary transition-colors" />
+                        </div>
                       </th>
                     ))}
-                    {isEditingColumns && (
-                      <th className="px-4 py-3 w-10">
-                        <button onClick={addColumn} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Plus size={14} /></button>
-                      </th>
-                    )}
-                    {!isEditingColumns && <th className="px-4 py-3 w-10"></th>}
+                    <th className="px-4 py-3 w-10">
+                      <button onClick={addColumn} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Plus size={14} /></button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {isLoading ? (
-                    <tr><td colSpan={columns.length + 2} className="px-4 py-8 text-center text-slate-400">Loading...</td></tr>
-                  ) : currentPages.length === 0 ? (
-                    <tr><td colSpan={columns.length + 2} className="px-4 py-8 text-center text-slate-400">No entries found. Click "New Entry" to create one.</td></tr>
+                    <tr><td colSpan={localColumns.length + 2} className="px-4 py-8 text-center text-slate-400">Loading...</td></tr>
+                  ) : sortedAndFilteredPages.length === 0 ? (
+                    <tr><td colSpan={localColumns.length + 2} className="px-4 py-8 text-center text-slate-400">No entries found. Click "New Entry" to create one.</td></tr>
                   ) : (
-                    currentPages.map((entry) => {
+                    sortedAndFilteredPages.map((entry) => {
                       const props = JSON.parse(entry.properties || '{}');
                       const progress = getTaskProgress(entry.id);
                       return (
-                        <tr
-                          key={entry.id}
-                          className="hover:bg-slate-50 transition-colors group cursor-pointer"
+                        <tr 
+                          key={entry.id} 
+                          className={`hover:bg-slate-50 transition-colors group cursor-pointer ${selectedRows.includes(entry.id) ? 'bg-primary/5' : ''}`}
                           onClick={() => setSelectedEntry(entry)}
                         >
                           <td className="px-4 py-4">
-                            <div className="font-semibold text-slate-900 flex items-center gap-2">
-                              <FileText size={16} className="text-slate-400" />
-                              {entry.title}
-                            </div>
-                            {progress && (
-                              <div className="mt-2 flex items-center gap-2 w-48">
-                                <div className="h-1.5 flex-1 bg-slate-200 rounded-full overflow-hidden">
-                                  <div className="h-full bg-primary rounded-full" style={{ width: `${progress.percentage}%` }}></div>
-                                </div>
-                                <span className="text-[10px] font-bold text-slate-400">{progress.completed}/{progress.total}</span>
-                              </div>
-                            )}
+                            <input 
+                              type="checkbox" 
+                              checked={selectedRows.includes(entry.id)}
+                              onChange={(e) => { e.stopPropagation(); toggleRowSelection(entry.id); }}
+                              className="rounded border-slate-300 text-primary focus:ring-primary"
+                            />
                           </td>
-                          {columns.map(col => (
+                          {localColumns.map(col => (
                             <td key={col.id} className="px-4 py-4 text-sm text-slate-600 truncate">
-                              {col.type === 'select' ? (
+                              {col.id === 'title' ? (
+                                <>
+                                  <div className="font-semibold text-slate-900 flex items-center gap-2">
+                                    <FileText size={16} className="text-slate-400" />
+                                    {entry.title}
+                                  </div>
+                                  {progress && (
+                                    <div className="mt-2 flex items-center gap-2 w-48">
+                                      <div className="h-1.5 flex-1 bg-slate-200 rounded-full overflow-hidden">
+                                        <div className="h-full bg-primary rounded-full" style={{ width: `${progress.percentage}%` }}></div>
+                                      </div>
+                                      <span className="text-[10px] font-bold text-slate-400">{progress.completed}/{progress.total}</span>
+                                    </div>
+                                  )}
+                                </>
+                              ) : col.type === 'select' ? (
                                 props[col.id] ? (
                                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
                                     {props[col.id]}
                                   </span>
                                 ) : null
-                              ) : (
-                                <div className="flex items-center gap-2 group/cell">
-                                  <span className="truncate">{props[col.id] || ''}</span>
-                                  {col.aiPrompt && (
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleAiAutofill(entry.id, col.id); }}
-                                      className="p-1 hover:bg-primary/10 text-primary opacity-0 group-hover/cell:opacity-100 transition-opacity rounded"
-                                      title="Run AI Autofill"
-                                    >
-                                      <Sparkles size={12} />
-                                    </button>
-                                  )}
+                              ) : col.type === 'checkbox' ? (
+                                <div className="flex items-center justify-center">
+                                  {props[col.id] === 'true' ? <CheckSquare size={16} className="text-primary" /> : <Square size={16} className="text-slate-300" />}
                                 </div>
+                              ) : col.type === 'url' ? (
+                                props[col.id] ? (
+                                  <a 
+                                    href={props[col.id].startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-primary hover:underline truncate block"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {props[col.id]}
+                                  </a>
+                                ) : null
+                              ) : (
+                                props[col.id] || ''
                               )}
                             </td>
                           ))}
                           <td className="px-4 py-4 text-center">
-                            <button
+                            <button 
                               onClick={(e) => { e.stopPropagation(); deletePage(entry.id); }}
                               className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                             >
@@ -735,13 +963,22 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                       );
                     })
                   )}
+                  <tr>
+                    <td colSpan={localColumns.length + 1} className="px-4 py-2 border-t border-slate-100">
+                      <button onClick={() => createPage(currentParentId)} className="text-sm text-slate-400 hover:text-primary flex items-center gap-1 py-1">
+                        <Plus size={14} /> New Row
+                      </button>
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
-          ) : (
+            </>
+          )}
+          {viewMode === 'board' && (
             <div className="flex gap-6 overflow-x-auto pb-8 items-start min-h-[500px]">
               {statuses.map(status => {
-                const columnPages = currentPages.filter(p => {
+                const columnPages = sortedAndFilteredPages.filter(p => {
                   const props = JSON.parse(p.properties || '{}');
                   return props[statusCol?.id || 'status'] === status;
                 });
@@ -749,10 +986,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                   <div key={status} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-2xl p-4 border border-slate-200/60">
                     <div className="flex items-center justify-between mb-4 px-1">
                       <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                        {status}
+                        {status} 
                         <span className="bg-slate-200 text-slate-600 text-xs py-0.5 px-2 rounded-full font-semibold">{columnPages.length}</span>
                       </h3>
-                      <button
+                      <button 
                         onClick={() => {
                           const initialProps = JSON.stringify({ [statusCol?.id || 'status']: status });
                           createPage(currentParentId, null, initialProps);
@@ -767,25 +1004,31 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                         const props = JSON.parse(page.properties || '{}');
                         const progress = getTaskProgress(page.id);
                         return (
-                          <div
-                            key={page.id}
+                          <div 
+                            key={page.id} 
                             onClick={() => setSelectedEntry(page)}
                             className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-primary/40 transition-all group"
                           >
                             <div className="flex justify-between items-start mb-2">
                               <h4 className="font-bold text-slate-900 leading-tight pr-4">{page.title}</h4>
-                              <button
+                              <button 
                                 onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
                                 className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                               >
                                 <Trash2 size={14} />
                               </button>
                             </div>
-
+                            
                             <div className="flex flex-wrap gap-1.5 mt-3">
-                              {columns.filter(c => c.id !== statusCol?.id && props[c.id]).map(col => (
+                              {localColumns.filter(c => c.id !== statusCol?.id && props[c.id] && (c.visibleInBoard !== false)).map(col => (
                                 <span key={col.id} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-500 border border-slate-100 uppercase tracking-wider">
-                                  {props[col.id]}
+                                  {col.type === 'checkbox' ? (
+                                    props[col.id] === 'true' ? <CheckSquare size={12} className="text-primary" /> : <Square size={12} className="text-slate-300" />
+                                  ) : col.type === 'url' ? (
+                                    <span className="truncate max-w-[150px]">{props[col.id]}</span>
+                                  ) : (
+                                    props[col.id]
+                                  )}
                                 </span>
                               ))}
                             </div>
@@ -815,21 +1058,26 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
               })}
             </div>
           )}
+          {viewMode !== 'table' && viewMode !== 'board' && (
+             <div className="text-center py-20 text-slate-400">
+               {viewMode.charAt(0).toUpperCase() + viewMode.slice(1)} view is not yet implemented.
+             </div>
+          )}
         </div>
       </div>
 
       {/* Side-peek Overlay */}
       {selectedEntry && (
         <>
-          <div
-            className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-20 transition-opacity"
+          <div 
+            className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-20 transition-opacity" 
             onClick={() => setSelectedEntry(null)}
           />
           <div className="absolute inset-y-0 right-0 w-full md:w-[600px] bg-white border-l border-slate-200 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between px-4 md:px-8 py-4 border-b border-slate-100">
               <div className="flex items-center gap-4">
                 {!selectedEntry.isTemplate && (
-                  <button
+                  <button 
                     onClick={() => {
                       setCurrentParentId(selectedEntry.id);
                       setSelectedEntry(null);
@@ -855,7 +1103,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     <Palette size={24} />
                     <span className="text-xs font-black uppercase tracking-[0.2em]">Project Note</span>
                   </div>
-                  <TextareaAutosize
+                  <TextareaAutosize 
                     value={selectedEntry.title}
                     onChange={(e) => updatePage(selectedEntry.id, { title: e.target.value })}
                     className="text-2xl md:text-4xl font-black text-slate-900 leading-tight w-full outline-none bg-transparent placeholder-slate-300 resize-none"
@@ -863,9 +1111,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     minRows={1}
                   />
                 </div>
-
+                
                 <div className="grid grid-cols-1 gap-px bg-slate-100 rounded-xl overflow-hidden border border-slate-100">
-                  {columns.map(col => {
+                  {localColumns.filter(c => c.id !== 'title').map(col => {
                     const props = JSON.parse(selectedEntry.properties || '{}');
                     return (
                       <div key={col.id} className="grid grid-cols-[140px_1fr] bg-white py-3 px-4">
@@ -874,7 +1122,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                         </div>
                         <div className="flex items-center">
                           {col.type === 'select' ? (
-                            <select
+                            <select 
                               value={props[col.id] || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
@@ -886,8 +1134,29 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                               {col.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                               {!col.options?.includes(props[col.id]) && props[col.id] && <option value={props[col.id]}>{props[col.id]}</option>}
                             </select>
+                          ) : col.type === 'checkbox' ? (
+                            <button
+                              onClick={() => {
+                                const newProps = { ...props, [col.id]: props[col.id] === 'true' ? 'false' : 'true' };
+                                updatePage(selectedEntry.id, { properties: JSON.stringify(newProps) });
+                              }}
+                              className="p-1 hover:bg-slate-100 rounded transition-colors"
+                            >
+                              {props[col.id] === 'true' ? <CheckSquare size={18} className="text-primary" /> : <Square size={18} className="text-slate-300" />}
+                            </button>
+                          ) : col.type === 'url' ? (
+                            <input 
+                              type="url"
+                              value={props[col.id] || ''}
+                              onChange={(e) => {
+                                const newProps = { ...props, [col.id]: e.target.value };
+                                updatePage(selectedEntry.id, { properties: JSON.stringify(newProps) });
+                              }}
+                              placeholder="https://..."
+                              className="w-full bg-transparent border-none outline-none focus:ring-0 p-0 text-sm text-slate-700 placeholder:text-slate-300"
+                            />
                           ) : (
-                            <TextareaAutosize
+                            <TextareaAutosize 
                               value={props[col.id] || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
@@ -905,14 +1174,14 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                 </div>
 
                 <div className="space-y-6">
-                  <RichTextEditor
-                    content={selectedEntry.content || ''}
-                    onChange={(content) => updatePage(selectedEntry.id, { content })}
+                  <RichTextEditor 
+                    content={selectedEntry.content || ''} 
+                    onChange={(content) => updatePage(selectedEntry.id, { content })} 
                     attachments={attachments}
                     onAddAttachment={handleAddAttachment}
                     onRemoveAttachment={handleRemoveAttachment}
                   />
-
+                  
                   {!selectedEntry.isTemplate && (
                     <div className="space-y-3 pt-6 border-t border-slate-100">
                       <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Sub-pages (Tasks)</h3>
@@ -921,9 +1190,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                           const subProps = JSON.parse(subPage.properties || '{}');
                           const statusId = statusCol?.id || 'status';
                           const isDone = subProps[statusId]?.toLowerCase() === 'done';
-
+                          
                           return (
-                            <div
+                            <div 
                               key={subPage.id}
                               className="flex items-center gap-3 group cursor-pointer p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-200 transition-all"
                               onClick={() => {
@@ -942,7 +1211,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                           );
                         })}
                       </div>
-                      <button
+                      <button 
                         onClick={() => createPage(selectedEntry.id)}
                         className="flex items-center gap-2 text-sm font-bold text-primary hover:text-primary/80 transition-colors mt-2"
                       >

@@ -1,117 +1,33 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
+import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
+import "dotenv/config";
 
-const db = new Database("database.sqlite");
+const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
 
-// Initialize database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS databases (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    icon TEXT,
-    columns TEXT
-  )
-`);
+if (!supabaseUrl || !supabaseKey) {
+  console.error("Supabase credentials missing. Please check your .env file.");
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS pages (
-    id TEXT PRIMARY KEY,
-    title TEXT,
-    content TEXT,
-    properties TEXT,
-    parentId TEXT,
-    databaseId TEXT,
-    isTemplate INTEGER DEFAULT 0
-  )
-`);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS dashboards (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    widgets TEXT
-  )
-`);
+const authenticate = async (req: any, res: any, next: any) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided' });
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS agents (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    status TEXT,
-    capability TEXT,
-    systemPrompt TEXT,
-    config TEXT
-  )
-`);
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return res.status(401).json({ error: 'Invalid token' });
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS agent_logs (
-    id TEXT PRIMARY KEY,
-    agentId TEXT,
-    action TEXT,
-    results TEXT,
-    createdAt TEXT
-  )
-`);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS page_versions (
-    id TEXT PRIMARY KEY,
-    pageId TEXT,
-    title TEXT,
-    content TEXT,
-    properties TEXT,
-    createdAt TEXT
-  )
-`);
+  req.user = user;
+  next();
+};
 
 const defaultColumns = JSON.stringify([
-  { id: "status", name: "Status", type: "select", width: 150, options: ["Todo", "In Progress", "Done"] },
-  { id: "date", name: "Date", type: "date", width: 150 },
-  { id: "priority", name: "Priority", type: "select", width: 150, options: ["Low", "Medium", "High"] },
-  { id: "assignee", name: "Assignee", type: "text", width: 150 }
+  { id: "title", name: "Title", type: "text", width: 200 },
+  { id: "status", name: "Status", type: "select", width: 150, options: ["Todo", "In Progress", "Done"] }
 ]);
-
-// Seed initial data if empty
-const countDbs = db.prepare("SELECT COUNT(*) as count FROM databases").get() as { count: number };
-if (countDbs.count === 0) {
-  const insertDb = db.prepare("INSERT INTO databases (id, name, icon, columns) VALUES (?, ?, ?, ?)");
-  insertDb.run("db-1", "Design Project", "Palette", defaultColumns);
-  insertDb.run("db-2", "Engineering Tasks", "Code", defaultColumns);
-
-  const insertPage = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
-
-  // Seed templates
-  insertPage.run("tpl-1", "Bug Report Template", "<h2>Steps to Reproduce</h2><p>1. </p><h2>Expected Behavior</h2><p></p><h2>Actual Behavior</h2><p></p>", JSON.stringify({ status: "Todo", priority: "High" }), null, "db-2", 1);
-  insertPage.run("tpl-2", "Design Spec Template", "<h2>Overview</h2><p></p><h2>Requirements</h2><ul><li></li></ul>", JSON.stringify({ status: "Todo", priority: "Medium" }), null, "db-1", 1);
-
-  // Seed pages
-  insertPage.run("1", "Color Palette Refinement", "We need to refine the primary and secondary colors for the new brand identity.", JSON.stringify({ status: "In Progress", date: "Oct 12, 2023", priority: "High", assignee: "Alex M." }), null, "db-1", 0);
-  insertPage.run("2", "Database Schema UI", "Design the UI for the database schema builder.", JSON.stringify({ status: "Done", date: "Oct 10, 2023", priority: "Medium", assignee: "Lena S." }), null, "db-1", 0);
-  insertPage.run("3", "Typography Guide (Inter)", "Create a comprehensive guide for using the Inter font family.", JSON.stringify({ status: "Todo", date: "Oct 08, 2023", priority: "Low", assignee: "Marc K." }), null, "db-1", 0);
-  insertPage.run("4", "API Rate Limiting", "Implement rate limiting for the public API.", JSON.stringify({ status: "In Progress", date: "Oct 05, 2023", priority: "High", assignee: "Sarah P." }), null, "db-2", 0);
-  insertPage.run("5", "Redis Cache Setup", "Setup Redis cache for faster read operations.", JSON.stringify({ status: "Done", date: "Oct 01, 2023", priority: "Medium", assignee: "Alex M." }), null, "db-2", 0);
-  insertPage.run("6", "Primary Colors", "Selected Blue (#135bec) as the primary brand color.", JSON.stringify({ status: "Done", date: "Oct 11, 2023", priority: "High", assignee: "Alex M." }), "1", "db-1", 0);
-}
-
-const countDashboards = db.prepare("SELECT COUNT(*) as count FROM dashboards").get() as { count: number };
-if (countDashboards.count === 0) {
-  const insertDashboard = db.prepare("INSERT INTO dashboards (id, name, widgets) VALUES (?, ?, ?)");
-  const defaultWidgets = JSON.stringify([
-    { i: 'w1', x: 0, y: 0, w: 2, h: 2, type: 'database', databaseId: 'db-1', viewMode: 'table' },
-    { i: 'w2', x: 2, y: 0, w: 1, h: 2, type: 'notes' },
-    { i: 'w3', x: 0, y: 2, w: 3, h: 2, type: 'database', databaseId: 'db-2', viewMode: 'board' }
-  ]);
-  insertDashboard.run("dash-1", "Home Dashboard", defaultWidgets);
-}
-
-const countAgents = db.prepare("SELECT COUNT(*) as count FROM agents").get() as { count: number };
-if (countAgents.count === 0) {
-  const insertAgent = db.prepare("INSERT INTO agents (id, name, status, capability, systemPrompt, config) VALUES (?, ?, ?, ?, ?, ?)");
-  insertAgent.run("agent-1", "Swiss Researcher", "idle", "Research & Summarization", "You are a professional research agent specializing in objective, high-density analysis. Your style is minimalist and Swiss.", JSON.stringify({ temperature: 0.1 }));
-}
 
 async function startServer() {
   const app = express();
@@ -120,207 +36,226 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+  // Apply authentication middleware to all /api routes
+  app.use("/api", authenticate);
+
   // API Routes for Databases
-  app.get("/api/databases", (req, res) => {
-    const databases = db.prepare("SELECT * FROM databases").all();
-    res.json(databases);
+  app.get("/api/databases", async (req: any, res) => {
+    const { data, error } = await supabase.from("app_databases").select("*").eq("user_id", req.user.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.post("/api/databases", (req, res) => {
+  app.post("/api/databases", async (req: any, res) => {
     const { name, icon } = req.body;
     const id = uuidv4();
-    const insert = db.prepare("INSERT INTO databases (id, name, icon, columns) VALUES (?, ?, ?, ?)");
-    insert.run(id, name || "Untitled Database", icon || "Database", defaultColumns);
+    const { data, error } = await supabase.from("app_databases").insert([
+      { id, name: name || "Untitled Database", icon: icon || "Database", columns: defaultColumns, user_id: req.user.id }
+    ]).select().single();
+    
+    if (error) return res.status(500).json({ error: error.message });
 
-    const newDb = db.prepare("SELECT * FROM databases WHERE id = ?").get(id);
-    res.json(newDb);
+    // Automatically add a row
+    const pageId = uuidv4();
+    const defaultProperties = JSON.stringify({ status: "Todo" });
+    const { error: pageError } = await supabase.from("app_pages").insert([
+      { id: pageId, title: "New Task", content: "", properties: defaultProperties, parentId: null, databaseId: id, isTemplate: 0, user_id: req.user.id }
+    ]);
+    if (pageError) console.error("Failed to insert default page:", pageError);
+    
+    const versionId = uuidv4();
+    const { error: versionError } = await supabase.from("app_page_versions").insert([
+      { id: versionId, pageId: pageId, title: "New Task", content: "", properties: defaultProperties, createdAt: new Date().toISOString(), user_id: req.user.id }
+    ]);
+    if (versionError) console.error("Failed to insert default page version:", versionError);
+
+    res.json(data);
   });
 
-  app.post("/api/databases/import", (req, res) => {
+  app.post("/api/databases/import", async (req: any, res) => {
     const { database, pages } = req.body;
     const dbId = uuidv4();
-
-    const insertDb = db.prepare("INSERT INTO databases (id, name, icon, columns) VALUES (?, ?, ?, ?)");
-    insertDb.run(dbId, (database.name || "Imported") + " (Imported)", database.icon || "Database", database.columns || "[]");
-
-    const insertPage = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
-
-    const idMap = new Map();
+    
+    const { error: dbError } = await supabase.from("app_databases").insert([
+      { id: dbId, name: (database.name || "Imported") + " (Imported)", icon: database.icon || "Database", columns: database.columns || "[]", user_id: req.user.id }
+    ]);
+    
+    if (dbError) return res.status(500).json({ error: dbError.message });
+    
     if (pages && Array.isArray(pages)) {
+      const idMap = new Map();
       for (const page of pages) {
         idMap.set(page.id, uuidv4());
       }
-
-      for (const page of pages) {
-        const newParentId = page.parentId ? idMap.get(page.parentId) : null;
-        insertPage.run(idMap.get(page.id), page.title || "Untitled", page.content || "", page.properties || "{}", newParentId, dbId, page.isTemplate ? 1 : 0);
-      }
+      
+      const pagesToInsert = pages.map(page => ({
+        id: idMap.get(page.id),
+        title: page.title || "Untitled",
+        content: page.content || "",
+        properties: page.properties || "{}",
+        parentId: page.parentId ? idMap.get(page.parentId) : null,
+        databaseId: dbId,
+        isTemplate: page.isTemplate ? 1 : 0,
+        user_id: req.user.id
+      }));
+      
+      const { error: pagesError } = await supabase.from("app_pages").insert(pagesToInsert);
+      if (pagesError) return res.status(500).json({ error: pagesError.message });
     }
-
-    const newDb = db.prepare("SELECT * FROM databases WHERE id = ?").get(dbId);
+    
+    const { data: newDb, error: fetchError } = await supabase.from("app_databases").select("*").eq("id", dbId).eq("user_id", req.user.id).single();
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
     res.json(newDb);
   });
 
-  app.put("/api/databases/:id", (req, res) => {
+  app.put("/api/databases/:id", async (req: any, res) => {
     const { id } = req.params;
     const { name, icon, columns } = req.body;
-
-    const update = db.prepare(`
-      UPDATE databases 
-      SET name = COALESCE(?, name),
-          icon = COALESCE(?, icon),
-          columns = COALESCE(?, columns)
-      WHERE id = ?
-    `);
-
-    update.run(name, icon, columns, id);
-    const updatedDb = db.prepare("SELECT * FROM databases WHERE id = ?").get(id);
-    res.json(updatedDb);
+    
+    const { data, error } = await supabase.from("app_databases")
+      .update({ name, icon, columns })
+      .eq("id", id)
+      .eq("user_id", req.user.id)
+      .select()
+      .single();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.delete("/api/databases/:id", (req, res) => {
+  app.delete("/api/databases/:id", async (req: any, res) => {
     const { id } = req.params;
-    db.prepare("DELETE FROM pages WHERE databaseId = ?").run(id);
-    db.prepare("DELETE FROM databases WHERE id = ?").run(id);
+    await supabase.from("app_pages").delete().eq("databaseId", id).eq("user_id", req.user.id);
+    const { error } = await supabase.from("app_databases").delete().eq("id", id).eq("user_id", req.user.id);
+    if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true });
   });
 
   // API Routes for Pages
-  app.get("/api/pages", (req, res) => {
-    const { databaseId } = req.query;
+  app.get("/api/pages", async (req: any, res) => {
+    const { databaseId, isNote } = req.query;
+    let query = supabase.from("app_pages").select("*").eq("user_id", req.user.id);
     if (databaseId) {
-      const pages = db.prepare("SELECT * FROM pages WHERE databaseId = ?").all(databaseId);
-      res.json(pages);
-    } else {
-      const pages = db.prepare("SELECT * FROM pages").all();
-      res.json(pages);
+      query = query.eq("databaseId", databaseId);
+    } else if (isNote === 'true') {
+      query = query.is("databaseId", null);
     }
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.post("/api/pages", (req, res) => {
+  app.post("/api/pages", async (req: any, res) => {
     const { title, content, properties, parentId, databaseId, isTemplate } = req.body;
     const id = uuidv4();
-    const insert = db.prepare("INSERT INTO pages (id, title, content, properties, parentId, databaseId, isTemplate) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    insert.run(id, title || "Untitled", content || "", properties || "{}", parentId || null, databaseId, isTemplate ? 1 : 0);
-
-    const newPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id) as any;
-
+    const { data: newPage, error } = await supabase.from("app_pages").insert([
+      { id, title: title || "Untitled", content: content || "", properties: properties || "{}", parentId: parentId || null, databaseId, isTemplate: isTemplate ? 1 : 0, user_id: req.user.id }
+    ]).select().single();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    
     const versionId = uuidv4();
-    const insertVersion = db.prepare("INSERT INTO page_versions (id, pageId, title, content, properties, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
-    insertVersion.run(versionId, id, newPage.title, newPage.content, newPage.properties, new Date().toISOString());
+    await supabase.from("app_page_versions").insert([
+      { id: versionId, pageId: id, title: newPage.title, content: newPage.content, properties: newPage.properties, createdAt: new Date().toISOString(), user_id: req.user.id }
+    ]);
 
     res.json(newPage);
   });
 
-  app.put("/api/pages/:id", (req, res) => {
+  app.put("/api/pages/:id", async (req: any, res) => {
     const { id } = req.params;
     const { title, content, properties, parentId, databaseId, isTemplate } = req.body;
-
-    const update = db.prepare(`
-      UPDATE pages 
-      SET title = COALESCE(?, title),
-          content = COALESCE(?, content),
-          properties = COALESCE(?, properties),
-          parentId = COALESCE(?, parentId),
-          databaseId = COALESCE(?, databaseId),
-          isTemplate = COALESCE(?, isTemplate)
-      WHERE id = ?
-    `);
-
-    update.run(title, content, properties, parentId, databaseId, isTemplate !== undefined ? (isTemplate ? 1 : 0) : null, id);
-    const updatedPage = db.prepare("SELECT * FROM pages WHERE id = ?").get(id) as any;
+    
+    const { data: updatedPage, error } = await supabase.from("app_pages")
+      .update({ title, content, properties, parentId, databaseId, isTemplate: isTemplate !== undefined ? (isTemplate ? 1 : 0) : undefined })
+      .eq("id", id)
+      .eq("user_id", req.user.id)
+      .select()
+      .single();
+    
+    if (error) return res.status(500).json({ error: error.message });
 
     const versionId = uuidv4();
-    const insertVersion = db.prepare("INSERT INTO page_versions (id, pageId, title, content, properties, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
-    insertVersion.run(versionId, id, updatedPage.title, updatedPage.content, updatedPage.properties, new Date().toISOString());
+    await supabase.from("app_page_versions").insert([
+      { id: versionId, pageId: id, title: updatedPage.title, content: updatedPage.content, properties: updatedPage.properties, createdAt: new Date().toISOString(), user_id: req.user.id }
+    ]);
 
     res.json(updatedPage);
   });
 
-  app.get("/api/pages/:id/versions", (req, res) => {
+  app.get("/api/pages/:id/versions", async (req: any, res) => {
     const { id } = req.params;
-    const versions = db.prepare("SELECT * FROM page_versions WHERE pageId = ? ORDER BY createdAt DESC").all(id);
-    res.json(versions);
+    const { data, error } = await supabase.from("app_page_versions").select("*").eq("pageId", id).eq("user_id", req.user.id).order("createdAt", { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.delete("/api/pages/:id", (req, res) => {
+  app.delete("/api/pages/:id", async (req: any, res) => {
     const { id } = req.params;
-    db.prepare("DELETE FROM page_versions WHERE pageId = ?").run(id);
-    db.prepare("DELETE FROM pages WHERE parentId = ?").run(id);
-    db.prepare("DELETE FROM pages WHERE id = ?").run(id);
+    await supabase.from("app_page_versions").delete().eq("pageId", id).eq("user_id", req.user.id);
+    await supabase.from("app_pages").delete().eq("parentId", id).eq("user_id", req.user.id);
+    const { error } = await supabase.from("app_pages").delete().eq("id", id).eq("user_id", req.user.id);
+    if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true });
   });
 
   // API Routes for Dashboards
-  app.get("/api/dashboards", (req, res) => {
-    const dashboards = db.prepare("SELECT * FROM dashboards").all();
-    res.json(dashboards);
+  app.get("/api/dashboards", async (req: any, res) => {
+    const { data, error } = await supabase.from("app_dashboards").select("*").eq("user_id", req.user.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.post("/api/dashboards", (req, res) => {
+  app.post("/api/dashboards", async (req: any, res) => {
     const { name, widgets } = req.body;
     const id = uuidv4();
-    const insert = db.prepare("INSERT INTO dashboards (id, name, widgets) VALUES (?, ?, ?)");
-    insert.run(id, name || "Untitled Dashboard", widgets || "[]");
-
-    const newDashboard = db.prepare("SELECT * FROM dashboards WHERE id = ?").get(id);
-    res.json(newDashboard);
+    const { data, error } = await supabase.from("app_dashboards").insert([
+      { id, name: name || "Untitled Dashboard", widgets: widgets || "[]", user_id: req.user.id }
+    ]).select().single();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.put("/api/dashboards/:id", (req, res) => {
+  app.put("/api/dashboards/:id", async (req: any, res) => {
     const { id } = req.params;
     const { name, widgets } = req.body;
-
-    const update = db.prepare(`
-      UPDATE dashboards 
-      SET name = COALESCE(?, name),
-          widgets = COALESCE(?, widgets)
-      WHERE id = ?
-    `);
-
-    update.run(name, widgets, id);
-    const updatedDashboard = db.prepare("SELECT * FROM dashboards WHERE id = ?").get(id);
-    res.json(updatedDashboard);
+    
+    const { data, error } = await supabase.from("app_dashboards")
+      .update({ name, widgets })
+      .eq("id", id)
+      .eq("user_id", req.user.id)
+      .select()
+      .single();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  app.delete("/api/dashboards/:id", (req, res) => {
+  app.delete("/api/dashboards/:id", async (req: any, res) => {
     const { id } = req.params;
-    db.prepare("DELETE FROM dashboards WHERE id = ?").run(id);
+    const { error } = await supabase.from("app_dashboards").delete().eq("id", id).eq("user_id", req.user.id);
+    if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true });
   });
 
-  app.get("/api/search", (req, res) => {
+  app.get("/api/search", async (req: any, res) => {
     const q = req.query.q as string;
     if (!q) return res.json({ databases: [], pages: [], dashboards: [] });
 
     const searchPattern = `%${q}%`;
-
-    const databases = db.prepare("SELECT * FROM databases WHERE name LIKE ?").all(searchPattern);
-    const pages = db.prepare("SELECT * FROM pages WHERE title LIKE ? OR content LIKE ?").all(searchPattern, searchPattern);
-    const dashboards = db.prepare("SELECT * FROM dashboards WHERE name LIKE ?").all(searchPattern);
-
-    res.json({ databases, pages, dashboards });
-  });
-
-  // AI Agent Routes
-  app.get("/api/agents", (req, res) => {
-    const agents = db.prepare("SELECT * FROM agents").all();
-    res.json(agents);
-  });
-
-  app.post("/api/agents", (req, res) => {
-    const { name, capability, systemPrompt, config } = req.body;
-    const id = uuidv4();
-    const insert = db.prepare("INSERT INTO agents (id, name, status, capability, systemPrompt, config) VALUES (?, ?, ?, ?, ?, ?)");
-    insert.run(id, name, "idle", capability, systemPrompt, JSON.stringify(config || {}));
-    const newAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
-    res.json(newAgent);
-  });
-
-  app.get("/api/agents/:id/logs", (req, res) => {
-    const { id } = req.params;
-    const logs = db.prepare("SELECT * FROM agent_logs WHERE agentId = ? ORDER BY createdAt DESC").all(id);
-    res.json(logs);
+    
+    const [dbRes, pageRes, dashRes] = await Promise.all([
+      supabase.from("app_databases").select("*").eq("user_id", req.user.id).ilike("name", searchPattern),
+      supabase.from("app_pages").select("*").eq("user_id", req.user.id).or(`title.ilike.${searchPattern},content.ilike.${searchPattern}`),
+      supabase.from("app_dashboards").select("*").eq("user_id", req.user.id).ilike("name", searchPattern)
+    ]);
+    
+    res.json({ 
+      databases: dbRes.data || [], 
+      pages: pageRes.data || [], 
+      dashboards: dashRes.data || [] 
+    });
   });
 
   // Vite middleware for development

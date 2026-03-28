@@ -108,7 +108,7 @@ export default function GanttChart({ tasks, onTaskClick }: GanttChartProps) {
 
   // Draw dependency lines (simple SVG)
   const renderDependencies = () => {
-    const lines: JSX.Element[] = [];
+    const lines: React.ReactNode[] = [];
     
     tasks.forEach((task, taskIndex) => {
       task.dependencies.forEach(depId => {

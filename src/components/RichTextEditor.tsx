@@ -1,32 +1,138 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
-import { BubbleMenu } from '@tiptap/react/menus';
+import { useEditor, EditorContent, BubbleMenu, FloatingMenu } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
-import BubbleMenuExtension from '@tiptap/extension-bubble-menu';
+import Placeholder from '@tiptap/extension-placeholder';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import CharacterCount from '@tiptap/extension-character-count';
+import Image from '@tiptap/extension-image';
+import { Table } from '@tiptap/extension-table';
+import TableRow from '@tiptap/extension-table-row';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
 import { Markdown } from 'tiptap-markdown';
+import { Node, mergeAttributes } from '@tiptap/core';
+import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import debounce from 'lodash/debounce';
-import { runAiAction } from '../lib/gemini';
-import {
-  Bold, Italic, Strikethrough, Underline as UnderlineIcon,
-  List, ListOrdered, Quote, Heading1, Heading2, Heading3,
-  Code, Undo, Redo, Link as LinkIcon, AlignLeft, AlignCenter,
+import { 
+  Bold, Italic, Strikethrough, Underline as UnderlineIcon, 
+  List, ListOrdered, Quote, Heading1, Heading2, Heading3, 
+  Code, Undo, Redo, Link as LinkIcon, AlignLeft, AlignCenter, 
   AlignRight, AlignJustify, Highlighter, Minus, Paperclip, File, X,
-  Sparkles, Languages, Type, Shrink, Expand, Wand2
+  CheckSquare, Type, Table as TableIcon, Image as ImageIcon, Database as DatabaseIcon,
+  Plus
 } from 'lucide-react';
+import DatabaseComponent from './DatabaseComponent';
+import { apiFetch } from '../lib/api';
 
-const AiActionButton = ({ icon, label, onClick }: { icon: React.ReactNode, label: string, onClick: () => void }) => (
-  <button
-    onClick={onClick}
-    className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-white/10 hover:text-white transition-colors text-left w-full"
-  >
-    {icon}
-    <span>{label}</span>
-  </button>
-);
+const DatabaseBlock = Node.create({
+  name: 'databaseBlock',
+  group: 'block',
+  atom: true,
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+      },
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'div[data-type="database"]',
+      },
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'database' })]
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(DatabaseBlockView)
+  },
+})
+
+function DatabaseBlockView({ node, updateAttributes }: any) {
+  const [isCreating, setIsCreating] = useState(!node.attrs.id);
+  const [databases, setDatabases] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!node.attrs.id) {
+      fetchDatabases();
+    }
+  }, [node.attrs.id]);
+
+  const fetchDatabases = async () => {
+    try {
+      const data = await apiFetch('/api/databases');
+      setDatabases(data);
+    } catch (error) {
+      console.error('Failed to fetch databases:', error);
+    }
+  };
+
+  const handleSelectDatabase = (id: string) => {
+    updateAttributes({ id });
+    setIsCreating(false);
+  };
+
+  const handleCreateDatabase = async () => {
+    const name = await window.appPrompt("Enter new database name:");
+    if (!name) return;
+    
+    try {
+      const newDb = await apiFetch('/api/databases', {
+        method: 'POST',
+        body: JSON.stringify({ name, icon: 'Database' })
+      });
+      updateAttributes({ id: newDb.id });
+      setIsCreating(false);
+      window.dispatchEvent(new CustomEvent('databases-changed'));
+    } catch (error) {
+      console.error('Failed to create database:', error);
+    }
+  };
+
+  return (
+    <NodeViewWrapper className="database-block-wrapper my-8">
+      {node.attrs.id ? (
+        <div contentEditable={false}>
+          <DatabaseComponent databaseId={node.attrs.id} isInline={true} />
+        </div>
+      ) : (
+        <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl p-8 flex flex-col items-center justify-center gap-4" contentEditable={false}>
+          <div className="bg-white p-3 rounded-full shadow-sm text-slate-400">
+            <DatabaseIcon size={24} />
+          </div>
+          <div className="text-center">
+            <h4 className="font-bold text-slate-900 text-sm">Insert Database</h4>
+            <p className="text-xs text-slate-500 mt-1">Select an existing database or create a new one.</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+            {databases.map(db => (
+              <button 
+                key={db.id}
+                onClick={() => handleSelectDatabase(db.id)}
+                className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium hover:border-primary hover:text-primary transition-all shadow-sm"
+              >
+                {db.name}
+              </button>
+            ))}
+            <button 
+              onClick={handleCreateDatabase}
+              className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all shadow-sm flex items-center gap-1.5"
+            >
+              <Plus size={14} /> New Database
+            </button>
+          </div>
+        </div>
+      )}
+    </NodeViewWrapper>
+  )
+}
 
 interface Attachment {
   id: string;
@@ -43,12 +149,12 @@ interface RichTextEditorProps {
   onRemoveAttachment?: (id: string) => void;
 }
 
-export default function RichTextEditor({
-  content,
-  onChange,
-  attachments = [],
-  onAddAttachment,
-  onRemoveAttachment
+export default function RichTextEditor({ 
+  content, 
+  onChange, 
+  attachments = [], 
+  onAddAttachment, 
+  onRemoveAttachment 
 }: RichTextEditorProps) {
   const [isRawMode, setIsRawMode] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -75,10 +181,23 @@ export default function RichTextEditor({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight,
       Markdown,
-      BubbleMenuExtension.configure({
-        element: null, // We'll provide it in the component
+      Placeholder.configure({
+        placeholder: 'Type "/" for commands or start writing...',
       }),
-    ],
+      TaskList,
+      TaskItem.configure({
+        nested: true,
+      }),
+      CharacterCount,
+      Image,
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      DatabaseBlock,
+    ] as any[],
     content,
     onUpdate: ({ editor }) => {
       debouncedOnChange((editor.storage as any).markdown.getMarkdown());
@@ -88,15 +207,15 @@ export default function RichTextEditor({
         class: 'prose prose-slate prose-sm sm:prose-base focus:outline-none max-w-none min-h-[200px] prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary prose-p:leading-relaxed prose-pre:bg-slate-50 prose-pre:text-slate-900 prose-pre:border prose-pre:border-slate-200 prose-headings:font-display prose-h1:text-4xl prose-h2:text-2xl prose-h3:text-xl prose-blockquote:border-l-4 prose-blockquote:border-primary/50 prose-blockquote:bg-slate-50 prose-blockquote:py-1 prose-blockquote:px-4 prose-blockquote:rounded-r-lg prose-blockquote:not-italic prose-blockquote:text-slate-700',
       },
     },
-  });
+  }) as any;
 
   if (!editor) {
     return null;
   }
 
-  const setLink = () => {
+  const setLink = async () => {
     const previousUrl = editor.getAttributes('link').href
-    const url = window.prompt('URL', previousUrl)
+    const url = await window.appPrompt('URL', previousUrl)
     if (url === null) return
     if (url === '') {
       editor.chain().focus().extendMarkRange('link').unsetLink().run()
@@ -127,7 +246,7 @@ export default function RichTextEditor({
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm transition-shadow focus-within:shadow-md focus-within:border-primary/50 flex flex-col">
       <div className="flex flex-col border-b border-slate-200 bg-slate-50/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center justify-between p-2 flex-wrap gap-y-2">
-
+          
           {/* History & Basic Formatting */}
           <div className="flex items-center gap-1">
             <div className="flex items-center bg-white border border-slate-200 rounded-md p-0.5 shadow-sm mr-2">
@@ -278,6 +397,14 @@ export default function RichTextEditor({
             >
               <ListOrdered size={14} />
             </button>
+            <button
+              onClick={() => editor.chain().focus().toggleTaskList().run()}
+              disabled={isRawMode}
+              className={`p-1.5 rounded transition-colors ${isRawMode ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-100'} ${editor.isActive('taskList') && !isRawMode ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+              title="Task List"
+            >
+              <CheckSquare size={14} />
+            </button>
           </div>
 
           <div className="flex items-center bg-white border border-slate-200 rounded-md p-0.5 shadow-sm">
@@ -309,11 +436,11 @@ export default function RichTextEditor({
 
           {onAddAttachment && (
             <div className="flex items-center bg-white border border-slate-200 rounded-md p-0.5 shadow-sm ml-auto">
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                className="hidden"
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -328,7 +455,7 @@ export default function RichTextEditor({
           )}
         </div>
       </div>
-
+      
       {attachments.length > 0 && (
         <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2">
           {attachments.map(att => (
@@ -339,7 +466,7 @@ export default function RichTextEditor({
                 <span className="text-[10px] text-slate-400">{formatFileSize(att.size)}</span>
               </div>
               {onRemoveAttachment && (
-                <button
+                <button 
                   onClick={() => onRemoveAttachment(att.id)}
                   className="ml-1 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
                 >
@@ -351,7 +478,7 @@ export default function RichTextEditor({
         </div>
       )}
 
-      <div className="p-5 sm:p-6 bg-white flex-1 flex flex-col">
+      <div className="p-5 sm:p-6 bg-white flex-1 flex flex-col relative">
         {isRawMode ? (
           <textarea
             defaultValue={(editor.storage as any).markdown.getMarkdown()}
@@ -365,87 +492,91 @@ export default function RichTextEditor({
           />
         ) : (
           <>
-            <BubbleMenu
-              editor={editor}
-              options={{ placement: 'top', offset: 8 }}
-              className="flex items-center gap-1 bg-slate-900 text-white p-1 rounded-lg shadow-xl border border-white/10"
-            >
-              <div className="flex items-center gap-0.5 border-r border-white/10 pr-1 mr-1">
-                <button
-                  onClick={() => editor.chain().focus().toggleBold().run()}
-                  className={`p-1.5 rounded hover:bg-white/10 ${editor.isActive('bold') ? 'text-primary' : 'text-white'}`}
-                >
-                  <Bold size={14} />
-                </button>
-                <button
-                  onClick={() => editor.chain().focus().toggleItalic().run()}
-                  className={`p-1.5 rounded hover:bg-white/10 ${editor.isActive('italic') ? 'text-primary' : 'text-white'}`}
-                >
-                  <Italic size={14} />
-                </button>
-              </div>
-
-              {/* AI ACTIONS */}
-              <div className="flex items-center gap-1 px-1 group relative">
-                <button
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded bg-primary/20 text-primary-light hover:bg-primary/30 transition-colors text-xs font-bold"
-                  title="AI Actions"
-                >
-                  <Sparkles size={14} className="animate-pulse" />
-                  Ask AI
-                </button>
-
-                <div className="absolute bottom-full left-0 mb-2 hidden group-hover:flex flex-col bg-slate-900 border border-white/10 rounded-lg shadow-2xl min-w-[180px] overflow-hidden">
-                  <AiActionButton
-                    icon={<Wand2 size={14} />}
-                    label="Improve Writing"
-                    onClick={async () => {
-                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
-                      const result = await runAiAction('improve', text);
-                      editor.chain().focus().insertContent(result).run();
-                    }}
-                  />
-                  <AiActionButton
-                    icon={<Shrink size={14} />}
-                    label="Summarize"
-                    onClick={async () => {
-                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
-                      const result = await runAiAction('summarize', text);
-                      editor.chain().focus().insertContent(result).run();
-                    }}
-                  />
-                  <AiActionButton
-                    icon={<Languages size={14} />}
-                    label="Translate to English"
-                    onClick={async () => {
-                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
-                      const result = await runAiAction('translate', text);
-                      editor.chain().focus().insertContent(result).run();
-                    }}
-                  />
-                  <AiActionButton
-                    icon={<Type size={14} />}
-                    label="Make Professional"
-                    onClick={async () => {
-                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
-                      const result = await runAiAction('professional', text);
-                      editor.chain().focus().insertContent(result).run();
-                    }}
-                  />
-                  <AiActionButton
-                    icon={<Sparkles size={14} />}
-                    label="Swiss Style"
-                    onClick={async () => {
-                      const text = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
-                      const result = await runAiAction('swiss', text);
-                      editor.chain().focus().insertContent(result).run();
-                    }}
-                  />
-                </div>
-              </div>
+            <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }} className="flex bg-white border border-slate-200 rounded-lg shadow-xl p-1 gap-1 overflow-hidden">
+              <button
+                onClick={() => editor.chain().focus().toggleBold().run()}
+                className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('bold') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+              >
+                <Bold size={14} />
+              </button>
+              <button
+                onClick={() => editor.chain().focus().toggleItalic().run()}
+                className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('italic') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+              >
+                <Italic size={14} />
+              </button>
+              <button
+                onClick={() => editor.chain().focus().toggleHighlight().run()}
+                className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('highlight') ? 'bg-yellow-200 text-yellow-900' : 'text-slate-600'}`}
+              >
+                <Highlighter size={14} />
+              </button>
+              <button
+                onClick={setLink}
+                className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('link') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+              >
+                <LinkIcon size={14} />
+              </button>
             </BubbleMenu>
 
+            <FloatingMenu editor={editor} tippyOptions={{ duration: 100 }} className="flex flex-col bg-white border border-slate-200 rounded-lg shadow-xl p-1 gap-1 overflow-hidden min-w-[150px]">
+              <button
+                onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <Heading1 size={14} />
+                Heading 1
+              </button>
+              <button
+                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <Heading2 size={14} />
+                Heading 2
+              </button>
+              <button
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <List size={14} />
+                Bullet List
+              </button>
+              <button
+                onClick={() => editor.chain().focus().toggleTaskList().run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <CheckSquare size={14} />
+                Task List
+              </button>
+              <button
+                onClick={() => editor.chain().focus().toggleBlockquote().run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <Quote size={14} />
+                Quote
+              </button>
+              <button
+                onClick={() => (editor.chain().focus() as any).insertContent({ type: 'databaseBlock' }).run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <DatabaseIcon size={14} />
+                Database
+              </button>
+            </FloatingMenu>
+
             <EditorContent editor={editor} className="min-h-[300px] flex-1 cursor-text" onClick={() => editor.commands.focus()} />
+            
+            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium uppercase tracking-wider">
+              <div className="flex items-center gap-4">
+                <span>{(editor.storage as any).characterCount.characters()} characters</span>
+                <span>{(editor.storage as any).characterCount.words()} words</span>
+              </div>
+              <div>
+                {editor.isActive('bold') && <span className="ml-2">Bold</span>}
+                {editor.isActive('italic') && <span className="ml-2">Italic</span>}
+                {editor.isActive('heading') && <span className="ml-2">Heading {editor.getAttributes('heading').level}</span>}
+              </div>
+            </div>
           </>
         )}
       </div>

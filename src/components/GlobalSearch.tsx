@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, FileText, Database, LayoutGrid, X } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 
 // Import MOCK_NOTES to include them in search results
 const MOCK_NOTES = [
@@ -87,8 +88,7 @@ export default function GlobalSearch({ isOpen, onClose, onNavigate }: GlobalSear
     }
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-        const data = await res.json();
+        const data = await apiFetch(`/api/search?q=${encodeURIComponent(query)}`);
         
         // Search mock notes locally
         const q = query.toLowerCase();
