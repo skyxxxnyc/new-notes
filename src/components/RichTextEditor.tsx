@@ -24,10 +24,38 @@ import {
   Code, Undo, Redo, Link as LinkIcon, AlignLeft, AlignCenter, 
   AlignRight, AlignJustify, Highlighter, Minus, Paperclip, File, X,
   CheckSquare, Type, Table as TableIcon, Image as ImageIcon, Database as DatabaseIcon,
-  Plus
+  Plus, Sparkles, Wand2, Languages, FileText, RefreshCw, Maximize2, HelpCircle, CheckCircle
 } from 'lucide-react';
+import { safeJsonParse, cn, formatFileSize } from '../lib/utils';
 import DatabaseComponent from './DatabaseComponent';
 import { apiFetch } from '../lib/api';
+import { generateAIResponse, processBlocksWithAI } from '../services/aiService';
+
+const Callout = Node.create({
+  name: 'callout',
+  group: 'block',
+  content: 'block*',
+  addAttributes() {
+    return {
+      emoji: {
+        default: '💡',
+      },
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'div[data-type="callout"]',
+      },
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'callout', class: 'callout-block bg-slate-50 border border-slate-200 rounded-lg p-4 my-4 flex gap-3' }), 
+      ['span', { class: 'callout-icon' }, HTMLAttributes.emoji],
+      ['div', { class: 'callout-content flex-1' }, 0]
+    ]
+  },
+})
 
 const DatabaseBlock = Node.create({
   name: 'databaseBlock',
@@ -44,11 +72,14 @@ const DatabaseBlock = Node.create({
     return [
       {
         tag: 'div[data-type="database"]',
+        getAttrs: (node: any) => ({
+          id: node.getAttribute('data-id'),
+        }),
       },
     ]
   },
   renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'database' })]
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'database', 'data-id': HTMLAttributes.id })]
   },
   addNodeView() {
     return ReactNodeViewRenderer(DatabaseBlockView)
@@ -157,6 +188,7 @@ export default function RichTextEditor({
   onRemoveAttachment 
 }: RichTextEditorProps) {
   const [isRawMode, setIsRawMode] = useState(false);
+  const [isAiLoading, setIsAiLoading] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Debounce the onChange callback to prevent excessive re-renders and markdown generation
@@ -180,7 +212,9 @@ export default function RichTextEditor({
       Link.configure({ openOnClick: false }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight,
-      Markdown,
+      Markdown.configure({
+        html: true,
+      }),
       Placeholder.configure({
         placeholder: 'Type "/" for commands or start writing...',
       }),
@@ -196,6 +230,7 @@ export default function RichTextEditor({
       TableRow,
       TableHeader,
       TableCell,
+      Callout,
       DatabaseBlock,
     ] as any[],
     content,
@@ -208,6 +243,25 @@ export default function RichTextEditor({
       },
     },
   }) as any;
+
+  useEffect(() => {
+    if (!editor) return;
+    
+    // Only update if content is different from current editor content
+    // and the editor is not currently focused (to avoid cursor jumps)
+    // OR if the content is significantly different (e.g. switching notes)
+    const currentMarkdown = (editor.storage as any).markdown.getMarkdown();
+    if (content !== undefined && content !== currentMarkdown) {
+      // If the editor is focused, we only update if the content is completely different
+      // (e.g. user clicked a different page in the background)
+      // If it's not focused, we always update to stay in sync
+      const isSignificantlyDifferent = Math.abs(content.length - currentMarkdown.length) > 20;
+      
+      if (!editor.isFocused || isSignificantlyDifferent) {
+        editor.commands.setContent(content, false);
+      }
+    }
+  }, [content, editor]);
 
   if (!editor) {
     return null;
@@ -224,6 +278,47 @@ export default function RichTextEditor({
     editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
   }
 
+  const handleAiAction = async (action: string) => {
+    const { from, to } = editor.state.selection;
+    const selectedText = editor.state.doc.textBetween(from, to, ' ');
+    
+    if (!selectedText) return;
+    
+    setIsAiLoading(true);
+    try {
+      const result = await processBlocksWithAI(selectedText, action);
+      if (result) {
+        editor.chain().focus().insertContentAt({ from, to }, result).run();
+      }
+    } catch (error) {
+      console.error('AI Action failed:', error);
+      // @ts-ignore
+      window.appAlert('AI Action failed. Please try again.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleAskAi = async () => {
+    const prompt = await window.appPrompt('Ask AI anything...');
+    if (!prompt) return;
+    
+    setIsAiLoading(true);
+    try {
+      const result = await generateAIResponse(prompt);
+      if (result) {
+        // Insert as child blocks below the cursor
+        editor.chain().focus().insertContent(result).run();
+      }
+    } catch (error) {
+      console.error('Ask AI failed:', error);
+      // @ts-ignore
+      window.appAlert('Ask AI failed. Please try again.');
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && onAddAttachment) {
@@ -232,14 +327,6 @@ export default function RichTextEditor({
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
   return (
@@ -496,30 +583,64 @@ export default function RichTextEditor({
               <button
                 onClick={() => editor.chain().focus().toggleBold().run()}
                 className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('bold') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+                title="Bold"
               >
                 <Bold size={14} />
               </button>
               <button
                 onClick={() => editor.chain().focus().toggleItalic().run()}
                 className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('italic') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+                title="Italic"
               >
                 <Italic size={14} />
               </button>
               <button
                 onClick={() => editor.chain().focus().toggleHighlight().run()}
                 className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('highlight') ? 'bg-yellow-200 text-yellow-900' : 'text-slate-600'}`}
+                title="Highlight"
               >
                 <Highlighter size={14} />
               </button>
               <button
                 onClick={setLink}
                 className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('link') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
+                title="Link"
               >
                 <LinkIcon size={14} />
               </button>
+              <div className="w-px h-4 bg-slate-200 mx-1 self-center" />
+              <button
+                onClick={() => handleAiAction('summarize')}
+                className="p-1.5 rounded hover:bg-slate-100 text-primary transition-colors"
+                title="Summarize"
+              >
+                <FileText size={14} />
+              </button>
+              <button
+                onClick={() => handleAiAction('rewrite')}
+                className="p-1.5 rounded hover:bg-slate-100 text-primary transition-colors"
+                title="Rewrite"
+              >
+                <RefreshCw size={14} />
+              </button>
+              <button
+                onClick={() => handleAiAction('translate')}
+                className="p-1.5 rounded hover:bg-slate-100 text-primary transition-colors"
+                title="Translate"
+              >
+                <Languages size={14} />
+              </button>
             </BubbleMenu>
 
-            <FloatingMenu editor={editor} tippyOptions={{ duration: 100 }} className="flex flex-col bg-white border border-slate-200 rounded-lg shadow-xl p-1 gap-1 overflow-hidden min-w-[150px]">
+            <FloatingMenu editor={editor} tippyOptions={{ duration: 100 }} className="flex flex-col bg-white border border-slate-200 rounded-lg shadow-xl p-1 gap-1 overflow-hidden min-w-[180px]">
+              <button
+                onClick={handleAskAi}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/5 rounded transition-colors"
+              >
+                <Sparkles size={14} />
+                Ask AI
+              </button>
+              <div className="h-px bg-slate-100 my-1" />
               <button
                 onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
                 className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
@@ -556,6 +677,13 @@ export default function RichTextEditor({
                 Quote
               </button>
               <button
+                onClick={() => (editor.chain().focus() as any).insertContent({ type: 'callout' }).run()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <Highlighter size={14} />
+                Callout
+              </button>
+              <button
                 onClick={() => (editor.chain().focus() as any).insertContent({ type: 'databaseBlock' }).run()}
                 className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
               >
@@ -565,6 +693,15 @@ export default function RichTextEditor({
             </FloatingMenu>
 
             <EditorContent editor={editor} className="min-h-[300px] flex-1 cursor-text" onClick={() => editor.commands.focus()} />
+            
+            {isAiLoading && (
+              <div className="absolute inset-0 bg-white/50 backdrop-blur-[1px] flex items-center justify-center z-20">
+                <div className="bg-white px-4 py-2 rounded-full shadow-lg border border-slate-200 flex items-center gap-3">
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs font-bold text-slate-700">AI is thinking...</span>
+                </div>
+              </div>
+            )}
             
             <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium uppercase tracking-wider">
               <div className="flex items-center gap-4">

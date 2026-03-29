@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  LayoutGrid, FileText, Calendar, Database, CheckSquare, Plus, X, Search, Settings, ChevronRight, ChevronDown, ChevronLeft, LogOut
+  LayoutGrid, FileText, Calendar, Database, CheckSquare, Plus, X, Search, Settings, ChevronRight, ChevronDown, ChevronLeft, LogOut, Sparkles
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
+import { renderPropertyValue } from '../lib/utils';
 
 interface SidebarProps {
   currentView: string;
   setCurrentView: (view: string) => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
+  onOpenAgents: () => void;
   isCollapsed: boolean;
   setIsCollapsed: (collapsed: boolean) => void;
 }
@@ -19,6 +21,7 @@ export default function Sidebar({
   setCurrentView, 
   onOpenSearch, 
   onOpenSettings,
+  onOpenAgents,
   isCollapsed,
   setIsCollapsed
 }: SidebarProps) {
@@ -160,6 +163,21 @@ export default function Sidebar({
             {!isCollapsed && <span className="text-[10px] font-bold bg-white px-1.5 py-0.5 rounded shadow-sm border border-slate-200">⌘K</span>}
           </button>
 
+          <button
+            onClick={onOpenAgents}
+            className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 py-2 rounded-lg text-primary hover:bg-primary/5 transition-colors mb-4 border border-primary/20 bg-primary/5`}
+            title={isCollapsed ? "AI Agents" : undefined}
+          >
+            <Sparkles size={18} className="shrink-0" />
+            {!isCollapsed && (
+              <div className="flex flex-col items-start">
+                <span className="text-sm font-bold">AI Agents</span>
+                <span className="text-[10px] opacity-70">Ask anything...</span>
+              </div>
+            )}
+            {!isCollapsed && <span className="ml-auto text-[10px] font-bold bg-white/50 px-1.5 py-0.5 rounded shadow-sm border border-primary/10">⌘J</span>}
+          </button>
+
           {navItems.map((item) => (
             <div key={item.id}>
               <div
@@ -247,7 +265,7 @@ export default function Sidebar({
                               className="flex items-center gap-2 px-2 py-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors text-[11px] text-left truncate"
                             >
                               <FileText size={10} className="shrink-0" />
-                              <span className="truncate">{page.title}</span>
+                              <span className="truncate">{renderPropertyValue(page.title)}</span>
                             </button>
                           ))}
                         </div>

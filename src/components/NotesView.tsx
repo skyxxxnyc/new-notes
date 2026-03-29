@@ -3,6 +3,7 @@ import { Search, Bold, Italic, List, ImageIcon, Link as LinkIcon, Share, MoreVer
 import { generateNoteSummary, improveWriting } from '../lib/gemini';
 import RichTextEditor from './RichTextEditor';
 import { apiFetch } from '../lib/api';
+import { renderPropertyValue } from '../lib/utils';
 
 const MOCK_NOTES = [
   {
@@ -185,7 +186,7 @@ export default function NotesView({ onEnterFocus, onToggleSidebar }: { onEnterFo
                   </span>
                   <span className="text-[10px] text-slate-400">Recent</span>
                 </div>
-                <h3 className="text-sm font-bold leading-tight mb-1 truncate">{note.title}</h3>
+                <h3 className="text-sm font-bold leading-tight mb-1 truncate">{renderPropertyValue(note.title)}</h3>
                 <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{note.content.replace(/<[^>]*>/g, '').substring(0, 100)}...</p>
               </div>
             ))
@@ -236,7 +237,7 @@ export default function NotesView({ onEnterFocus, onToggleSidebar }: { onEnterFo
                 <span className="text-[11px] text-slate-400">Real-time sync enabled</span>
               </div>
               <input
-                value={activeNote.title}
+                value={renderPropertyValue(activeNote.title)}
                 onChange={(e) => handleUpdateTitle(e.target.value)}
                 className="w-full text-2xl md:text-4xl font-extrabold uppercase tracking-tighter text-slate-900 leading-tight md:leading-none mb-6 border-none outline-none bg-transparent"
                 placeholder="Untitled Note"

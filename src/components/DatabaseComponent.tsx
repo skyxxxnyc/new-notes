@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, FileText, Trash2, Edit2, List as ListIcon, LayoutGrid, 
-  Settings, Type, Hash, AlignLeft, Calendar, CircleDot, ChevronRight, CheckSquare, Link, ArrowUpDown, Square
+  Settings, Type, Hash, AlignLeft, Calendar, CircleDot, ChevronRight, CheckSquare, Link, ArrowUpDown, Square,
+  Sparkles, Wand2, Loader2
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { safeJsonParse, renderPropertyValue, cn } from '../lib/utils';
+import { generateAutofillValue } from '../services/aiService';
 
 interface Column {
   id: string;
@@ -12,6 +15,11 @@ interface Column {
   width: number;
   options?: string[];
   visibleInBoard?: boolean;
+  ai_autofill?: {
+    prompt: string;
+    source_properties: string[];
+    trigger: "manual" | "on_create" | "on_update";
+  };
 }
 
 interface Page {
@@ -45,6 +53,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
   const [isEditingColumns, setIsEditingColumns] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [filterText, setFilterText] = useState('');
+  const [isAutofilling, setIsAutofilling] = useState<Record<string, boolean>>({});
 
   const updateDatabase = async (updates: Partial<Database>) => {
     if (!database) return;
@@ -65,7 +74,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
     if (!database) return;
     const name = await window.appPrompt("Column Name:");
     if (!name) return;
-    const columns: Column[] = JSON.parse(database.columns || '[]');
+    const columns: Column[] = safeJsonParse<Column[]>(database.columns, []);
     const newCol: Column = { id: name.toLowerCase().replace(/\s+/g, '-'), name, type: 'text', width: 150, visibleInBoard: true };
     updateDatabase({ columns: JSON.stringify([...columns, newCol]) });
   };
@@ -80,13 +89,13 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
   const removeColumn = async (colId: string) => {
     if (!database) return;
     if (!await window.appConfirm("Remove this column?")) return;
-    const columns: Column[] = JSON.parse(database.columns || '[]');
+    const columns: Column[] = safeJsonParse<Column[]>(database.columns, []);
     updateDatabase({ columns: JSON.stringify(columns.filter(c => c.id !== colId)) });
   };
 
   const renameColumn = async (colId: string) => {
     if (!database) return;
-    const columns: Column[] = JSON.parse(database.columns || '[]');
+    const columns: Column[] = safeJsonParse<Column[]>(database.columns, []);
     const col = columns.find(c => c.id === colId);
     if (!col) return;
     const name = await window.appPrompt("New Column Name:", col.name);
@@ -96,8 +105,72 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
 
   const changeColumnType = (colId: string, type: Column['type']) => {
     if (!database) return;
-    const columns: Column[] = JSON.parse(database.columns || '[]');
+    const columns: Column[] = safeJsonParse<Column[]>(database.columns, []);
     updateDatabase({ columns: JSON.stringify(columns.map(c => c.id === colId ? { ...c, type } : c)) });
+  };
+
+  const configureAutofill = async (colId: string) => {
+    if (!database) return;
+    const columns: Column[] = safeJsonParse<Column[]>(database.columns, []);
+    const col = columns.find(c => c.id === colId);
+    if (!col) return;
+
+    const prompt = await window.appPrompt("AI Autofill Prompt (use prop('Name') to reference properties):", col.ai_autofill?.prompt || "");
+    if (prompt === null) return;
+
+    if (prompt === "") {
+      updateDatabase({ columns: JSON.stringify(columns.map(c => c.id === colId ? { ...c, ai_autofill: undefined } : c)) });
+      return;
+    }
+
+    const trigger = await window.appPrompt("Trigger (manual, on_create, on_update):", col.ai_autofill?.trigger || "manual") as any;
+    
+    updateDatabase({ columns: JSON.stringify(columns.map(c => c.id === colId ? { 
+      ...c, 
+      ai_autofill: { 
+        prompt, 
+        trigger: trigger || "manual",
+        source_properties: [] // We could parse this from prompt if needed
+      } 
+    } : c)) });
+  };
+
+  const runAutofill = async (pageId: string, colId: string) => {
+    if (!database) return;
+    const col = columns.find(c => c.id === colId);
+    if (!col || !col.ai_autofill) return;
+
+    const page = pages.find(p => p.id === pageId);
+    if (!page) return;
+
+    const key = `${pageId}-${colId}`;
+    setIsAutofilling(prev => ({ ...prev, [key]: true }));
+
+    try {
+      const props = safeJsonParse<Record<string, any>>(page.properties, {});
+      const context = {
+        title: page.title,
+        content: page.content,
+        ...props
+      };
+
+      const result = await generateAutofillValue(col.ai_autofill.prompt, context);
+      
+      if (result) {
+        const updatedProps = { ...props, [colId]: result };
+        await apiFetch(`/api/pages/${pageId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ properties: JSON.stringify(updatedProps) })
+        });
+        
+        setPages(prev => prev.map(p => p.id === pageId ? { ...p, properties: JSON.stringify(updatedProps) } : p));
+        window.dispatchEvent(new CustomEvent('pages-changed'));
+      }
+    } catch (error) {
+      console.error('Autofill failed:', error);
+    } finally {
+      setIsAutofilling(prev => ({ ...prev, [key]: false }));
+    }
   };
 
   useEffect(() => {
@@ -180,7 +253,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
   if (isLoading) return <div className="p-8 text-center text-slate-400 text-sm">Loading database...</div>;
   if (!database) return <div className="p-8 text-center text-red-400 text-sm">Database not found</div>;
 
-  const columns: Column[] = JSON.parse(database.columns || '[]');
+  const columns: Column[] = safeJsonParse<Column[]>(database.columns, []);
   const currentPages = pages.filter(p => !p.isTemplate);
   
   const sortedAndFilteredPages = React.useMemo(() => {
@@ -190,7 +263,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
       const lowerFilter = filterText.toLowerCase();
       result = result.filter(p => {
         if (p.title.toLowerCase().includes(lowerFilter)) return true;
-        const props = JSON.parse(p.properties || '{}');
+        const props = safeJsonParse<Record<string, any>>(p.properties, {});
         return Object.values(props).some(v => String(v).toLowerCase().includes(lowerFilter));
       });
     }
@@ -202,8 +275,8 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
           aValue = a.title;
           bValue = b.title;
         } else {
-          const aProps = JSON.parse(a.properties || '{}');
-          const bProps = JSON.parse(b.properties || '{}');
+          const aProps = safeJsonParse<Record<string, any>>(a.properties, {});
+          const bProps = safeJsonParse<Record<string, any>>(b.properties, {});
           aValue = aProps[sortConfig.key] || '';
           bValue = bProps[sortConfig.key] || '';
         }
@@ -330,6 +403,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
                             <LayoutGrid size={10} />
                           </button>
                           <button onClick={() => renameColumn(col.id)} className="p-0.5 hover:bg-slate-200 rounded text-slate-500"><Edit2 size={10} /></button>
+                          <button onClick={() => configureAutofill(col.id)} className={cn("p-0.5 rounded transition-colors", col.ai_autofill ? "bg-primary/10 text-primary" : "hover:bg-slate-200 text-slate-500")} title="Configure AI Autofill"><Sparkles size={10} /></button>
                           <button onClick={() => removeColumn(col.id)} className="p-0.5 hover:bg-slate-200 rounded text-red-500"><Trash2 size={10} /></button>
                         </div>
                       )}
@@ -346,7 +420,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
             </thead>
             <tbody className="divide-y divide-slate-50">
               {currentPages.map(page => {
-                const props = JSON.parse(page.properties || '{}');
+                const props = safeJsonParse<Record<string, any>>(page.properties, {});
                 return (
                   <tr 
                     key={page.id} 
@@ -356,36 +430,53 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
                     <td className="px-4 py-3 text-sm font-medium text-slate-900">
                       <div className="flex items-center gap-2">
                         <FileText size={14} className="text-slate-400" />
-                        {page.title}
+                        {renderPropertyValue(page.title)}
                       </div>
                     </td>
                     {columns.map(col => (
-                      <td key={col.id} className="px-4 py-3 text-xs text-slate-600 truncate">
-                        {col.type === 'select' ? (
-                          props[col.id] ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
-                              {props[col.id]}
-                            </span>
-                          ) : null
-                        ) : col.type === 'checkbox' ? (
-                          <div className="flex items-center">
-                            {props[col.id] === 'true' ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} className="text-slate-300" />}
+                      <td key={col.id} className="px-4 py-3 text-xs text-slate-600 truncate group/cell">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 truncate">
+                            {col.type === 'select' ? (
+                              props[col.id] ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
+                                  {renderPropertyValue(props[col.id])}
+                                </span>
+                              ) : null
+                            ) : col.type === 'checkbox' ? (
+                              <div className="flex items-center">
+                                {props[col.id] === 'true' ? <CheckSquare size={14} className="text-primary" /> : <Square size={14} className="text-slate-300" />}
+                              </div>
+                            ) : col.type === 'url' ? (
+                              props[col.id] ? (
+                                <a 
+                                  href={String(props[col.id]).startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-primary hover:underline truncate block"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {renderPropertyValue(props[col.id])}
+                                </a>
+                              ) : null
+                            ) : (
+                              renderPropertyValue(props[col.id]) || ''
+                            )}
                           </div>
-                        ) : col.type === 'url' ? (
-                          props[col.id] ? (
-                            <a 
-                              href={props[col.id].startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline truncate block"
-                              onClick={(e) => e.stopPropagation()}
+                          {col.ai_autofill && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); runAutofill(page.id, col.id); }}
+                              disabled={isAutofilling[`${page.id}-${col.id}`]}
+                              className={cn(
+                                "p-1 rounded opacity-0 group-hover/cell:opacity-100 transition-all",
+                                isAutofilling[`${page.id}-${col.id}`] ? "text-primary animate-pulse" : "text-slate-400 hover:text-primary hover:bg-primary/5"
+                              )}
+                              title="Run AI Autofill"
                             >
-                              {props[col.id]}
-                            </a>
-                          ) : null
-                        ) : (
-                          props[col.id] || ''
-                        )}
+                              {isAutofilling[`${page.id}-${col.id}`] ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     ))}
                     <td className="px-4 py-3 text-right">
@@ -405,19 +496,19 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
           <div className="flex gap-4 p-4 overflow-x-auto min-h-[300px] bg-slate-50/30">
             {statuses.map(status => {
               const columnPages = currentPages.filter(p => {
-                const props = JSON.parse(p.properties || '{}');
-                return props[statusCol?.id || 'status'] === status;
+                const props = safeJsonParse<Record<string, any>>(p.properties, {});
+                return renderPropertyValue(props[statusCol?.id || 'status']) === renderPropertyValue(status);
               });
               return (
-                <div key={status} className="flex-shrink-0 w-64 flex flex-col gap-3">
+                <div key={renderPropertyValue(status)} className="flex-shrink-0 w-64 flex flex-col gap-3">
                   <div className="flex items-center justify-between px-1">
                     <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                      {status}
+                      {renderPropertyValue(status)}
                       <span className="bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full text-[9px]">{columnPages.length}</span>
                     </h4>
                   </div>
                   {columnPages.map(page => {
-                    const props = JSON.parse(page.properties || '{}');
+                    const props = safeJsonParse<Record<string, any>>(page.properties, {});
                     return (
                       <div 
                         key={page.id}
@@ -425,7 +516,7 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
                         className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group"
                       >
                         <div className="flex justify-between items-start mb-2">
-                          <h5 className="text-xs font-bold text-slate-900 leading-tight">{page.title}</h5>
+                          <h5 className="text-xs font-bold text-slate-900 leading-tight">{renderPropertyValue(page.title)}</h5>
                           <button 
                             onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
                             className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
@@ -439,9 +530,9 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
                               {col.type === 'checkbox' ? (
                                 props[col.id] === 'true' ? <CheckSquare size={10} className="text-primary" /> : <Square size={10} className="text-slate-300" />
                               ) : col.type === 'url' ? (
-                                <span className="truncate max-w-[100px]">{props[col.id]}</span>
+                                <span className="truncate max-w-[100px]">{renderPropertyValue(props[col.id])}</span>
                               ) : (
-                                props[col.id]
+                                renderPropertyValue(props[col.id])
                               )}
                             </span>
                           ))}

@@ -33,6 +33,13 @@ export const GlobalModals = () => {
         setConfirmState({ isOpen: true, message, resolve });
       });
     };
+
+    // @ts-ignore
+    window.appAlert = (message: string) => {
+      return new Promise<void>((resolve) => {
+        setConfirmState({ isOpen: true, message, resolve: () => resolve() });
+      });
+    };
   }, []);
 
   const handlePromptSubmit = (e: React.FormEvent) => {

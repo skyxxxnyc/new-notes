@@ -5,12 +5,20 @@ import {
   Palette, Calendar, AlertCircle, User, CircleDot,
   ChevronRight, FileText, Trash2, Database as DatabaseIcon,
   Settings, Type, Hash, AlignLeft, Edit2,
-  Download, Upload, LayoutGrid, List as ListIcon, Menu, Link, Image, CalendarDays, Clock, Rss
+  Download, Upload, LayoutGrid, List as ListIcon, Menu, Link, Image, CalendarDays, Clock, Rss,
+  SlidersHorizontal
 } from 'lucide-react';
 import Papa from 'papaparse';
 import TextareaAutosize from 'react-textarea-autosize';
 import RichTextEditor from './RichTextEditor';
 import { apiFetch } from '../lib/api';
+import { safeJsonParse, renderPropertyValue } from '../lib/utils';
+import CSVMappingModal from './CSVMappingModal';
+import LayoutModeSelector from './LayoutModeSelector';
+import PageOpener from './PageOpener';
+import CustomizeLayoutPopover from './CustomizeLayoutPopover';
+import { AnimatePresence, motion } from 'motion/react';
+import { useLayout } from '../contexts/LayoutContext';
 
   type Column = {
   id: string;
@@ -52,6 +60,37 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [filterText, setFilterText] = useState('');
   const [selectedRows, setSelectedRows] = useState<string[]>([]);
+  const [isLayoutPopoverOpen, setIsLayoutPopoverOpen] = useState(false);
+  const layoutTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const moreMenuTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const moreMenuRef = React.useRef<HTMLDivElement>(null);
+  const { getLayoutConfig } = useLayout();
+
+  // Handle click outside for more menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        moreMenuRef.current && 
+        !moreMenuRef.current.contains(event.target as Node) &&
+        moreMenuTriggerRef.current &&
+        !moreMenuTriggerRef.current.contains(event.target as Node)
+      ) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Handle Esc key for more menu
+  useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsMoreMenuOpen(false);
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, []);
 
   const toggleRowSelection = (id: string) => {
     setSelectedRows(prev => prev.includes(id) ? prev.filter(rowId => rowId !== id) : [...prev, id]);
@@ -71,7 +110,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     for (const id of selectedRows) {
       const page = pages.find(p => p.id === id);
       if (page) {
-        const props = JSON.parse(page.properties || '{}');
+        const props = safeJsonParse<Record<string, any>>(page.properties, {});
         props[assigneeCol.id] = assignee;
         await updatePage(page.id, { properties: JSON.stringify(props) });
       }
@@ -93,7 +132,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     for (const id of selectedRows) {
       const page = pages.find(p => p.id === id);
       if (page) {
-        const props = JSON.parse(page.properties || '{}');
+        const props = safeJsonParse<Record<string, any>>(page.properties, {});
         props[statusCol.id] = status;
         await updatePage(page.id, { properties: JSON.stringify(props) });
       }
@@ -337,6 +376,27 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     }
   };
 
+  const [isCSVModalOpen, setIsCSVModalOpen] = useState(false);
+  const [csvData, setCSVData] = useState<{ headers: string[]; data: any[]; fileName: string } | null>(null);
+
+  const handleCSVImport = async (mappedData: any) => {
+    try {
+      const newDb = await apiFetch('/api/databases/import', {
+        method: 'POST',
+        body: JSON.stringify(mappedData)
+      });
+      setDatabases([...databases, newDb]);
+      setCurrentDatabaseId(newDb.id);
+      setCurrentParentId(null);
+      setSelectedEntry(null);
+      window.dispatchEvent(new CustomEvent('databases-changed'));
+      setIsCSVModalOpen(false);
+    } catch (err) {
+      console.error("Import failed", err);
+      alert("Import failed. Please check the file format.");
+    }
+  };
+
   const importDatabase = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -368,52 +428,13 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             Papa.parse(text, {
               header: true,
               skipEmptyLines: true,
-              complete: async (results) => {
-                const headers = results.meta.fields || [];
-                const columns = headers.map(h => ({
-                  id: h.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-                  name: h,
-                  type: 'text',
-                  width: 150
-                }));
-                
-                const pagesData = results.data.map((row: any, index) => {
-                  const titleCol = headers[0];
-                  const title = titleCol && row[titleCol] ? row[titleCol] : `Row ${index + 1}`;
-                  const properties: Record<string, any> = {};
-                  headers.forEach(h => {
-                    const colId = h.toLowerCase().replace(/[^a-z0-9]/g, '-');
-                    properties[colId] = row[h];
-                  });
-                  
-                  return {
-                    id: `temp-${index}`,
-                    title,
-                    content: '',
-                    properties: JSON.stringify(properties),
-                    parentId: null,
-                    isTemplate: false
-                  };
+              complete: (results) => {
+                setCSVData({
+                  headers: results.meta.fields || [],
+                  data: results.data,
+                  fileName: file.name
                 });
-
-                const data = {
-                  database: {
-                    name: file.name.replace(/\.csv$/i, ''),
-                    icon: 'Database',
-                    columns: JSON.stringify(columns)
-                  },
-                  pages: pagesData
-                };
-
-                const newDb = await apiFetch('/api/databases/import', {
-                  method: 'POST',
-                  body: JSON.stringify(data)
-                });
-                setDatabases([...databases, newDb]);
-                setCurrentDatabaseId(newDb.id);
-                setCurrentParentId(null);
-                setSelectedEntry(null);
-                window.dispatchEvent(new CustomEvent('databases-changed'));
+                setIsCSVModalOpen(true);
               }
             });
           } else if (extension === 'md') {
@@ -435,7 +456,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   };
 
   const currentDb = databases.find(db => db.id === currentDatabaseId);
-  const columns: Column[] = currentDb && currentDb.columns ? JSON.parse(currentDb.columns) : [];
+  const columns: Column[] = currentDb ? safeJsonParse(currentDb.columns, []) : [];
   
   useEffect(() => {
     if (columns && columns.length > 0 && !columns.some(c => c.id === 'title')) {
@@ -485,7 +506,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
       const lowerFilter = filterText.toLowerCase();
       result = result.filter(p => {
         if (p.title.toLowerCase().includes(lowerFilter)) return true;
-        const props = JSON.parse(p.properties || '{}');
+        const props = safeJsonParse<Record<string, any>>(p.properties, {});
         return Object.values(props).some(v => String(v).toLowerCase().includes(lowerFilter));
       });
     }
@@ -497,8 +518,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           aValue = a.title;
           bValue = b.title;
         } else {
-          const aProps = JSON.parse(a.properties || '{}');
-          const bProps = JSON.parse(b.properties || '{}');
+          const aProps = safeJsonParse<Record<string, any>>(a.properties, {});
+          const bProps = safeJsonParse<Record<string, any>>(b.properties, {});
           aValue = aProps[sortConfig.key] || '';
           bValue = bProps[sortConfig.key] || '';
         }
@@ -589,8 +610,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     const statusId = statusCol?.id || 'status';
     
     const completed = subPages.filter(p => {
-      const props = JSON.parse(p.properties || '{}');
-      const val = props[statusId]?.toLowerCase() || '';
+      const props = safeJsonParse<Record<string, any>>(p.properties, {});
+      const val = String(props[statusId] || '').toLowerCase();
       return val === 'done' || val === 'completed' || val === 'finished';
     }).length;
     
@@ -668,6 +689,97 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
               <Download size={18} />
             </button>
             <div className="w-px h-4 bg-slate-200 mx-2"></div>
+            <div className="relative">
+              <button 
+                ref={layoutTriggerRef}
+                onClick={() => setIsLayoutPopoverOpen(!isLayoutPopoverOpen)}
+                className={`p-1.5 rounded transition-colors flex items-center gap-2 ${
+                  isLayoutPopoverOpen ? 'bg-primary/10 text-primary' : 'text-slate-400 hover:text-primary hover:bg-slate-100'
+                }`}
+                title="Customize Layout"
+              >
+                <SlidersHorizontal size={18} />
+                <span className="text-xs font-medium hidden lg:inline">Customize</span>
+              </button>
+
+              <AnimatePresence>
+                {isLayoutPopoverOpen && currentDatabaseId && (
+                  <CustomizeLayoutPopover 
+                    databaseId={currentDatabaseId}
+                    columns={localColumns}
+                    onClose={() => setIsLayoutPopoverOpen(false)}
+                    triggerRef={layoutTriggerRef}
+                  />
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="relative">
+              <button 
+                ref={moreMenuTriggerRef}
+                onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+                className="p-1.5 text-slate-400 hover:text-primary hover:bg-slate-100 rounded transition-colors"
+                title="More options"
+              >
+                <MoreHorizontal size={18} />
+              </button>
+
+              <AnimatePresence>
+                {isMoreMenuOpen && (
+                  <motion.div
+                    ref={moreMenuRef}
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute top-full right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 z-50 overflow-hidden py-1"
+                  >
+                    <button 
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setIsLayoutPopoverOpen(true);
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <SlidersHorizontal size={14} />
+                      Customize layout
+                    </button>
+                    <div className="h-px bg-slate-100 my-1"></div>
+                    <button 
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        importDatabase();
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <Upload size={14} />
+                      Import CSV
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        exportDatabase();
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                    >
+                      <Download size={14} />
+                      Export CSV
+                    </button>
+                    {currentDatabaseId && (
+                      <button 
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          deleteDatabase(currentDatabaseId);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                      >
+                        <Trash2 size={14} />
+                        Delete database
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
           <div className="relative flex-1 md:flex-none">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -690,14 +802,14 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                {breadcrumbs.map(bc => (
                  <React.Fragment key={bc.id}>
                    <ChevronRight size={14} className="mx-1 text-slate-400" />
-                   <button onClick={() => setCurrentParentId(bc.id)} className="hover:text-primary font-medium">{bc.title}</button>
+                   <button onClick={() => setCurrentParentId(bc.id)} className="hover:text-primary font-medium">{renderPropertyValue(bc.title)}</button>
                  </React.Fragment>
                ))}
             </div>
           )}
           {currentParentId ? (
             <h1 className="text-2xl md:text-4xl font-black tracking-tighter text-slate-900 mb-2 truncate">
-              {breadcrumbs[breadcrumbs.length - 1]?.title}
+              {renderPropertyValue(breadcrumbs[breadcrumbs.length - 1]?.title)}
             </h1>
           ) : (
             <input
@@ -724,7 +836,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           </p>
         </div>
 
-        <div className="px-4 md:px-8 border-b border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between py-4 sticky top-0 bg-white/90 backdrop-blur-md z-10 gap-4">
+        <div className="ml-[175px] mr-[175px] px-4 md:px-8 border-b border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between py-4 sticky top-0 bg-white/90 backdrop-blur-md z-10 gap-4">
           <div className="flex items-center gap-4 w-full md:w-auto border-b md:border-b-0 border-slate-100 pb-2 md:pb-0">
             <button 
               onClick={() => setViewMode('table')}
@@ -788,7 +900,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                   >
                     <FileText size={14} className="text-slate-400" />
-                    <span className="truncate">{tpl.title}</span>
+                    <span className="truncate">{renderPropertyValue(tpl.title)}</span>
                   </button>
                 ))}
                 <div className="border-t border-slate-100 my-1"></div>
@@ -891,7 +1003,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     <tr><td colSpan={localColumns.length + 2} className="px-4 py-8 text-center text-slate-400">No entries found. Click "New Entry" to create one.</td></tr>
                   ) : (
                     sortedAndFilteredPages.map((entry) => {
-                      const props = JSON.parse(entry.properties || '{}');
+                      const props = safeJsonParse<Record<string, any>>(entry.properties, {});
                       const progress = getTaskProgress(entry.id);
                       return (
                         <tr 
@@ -913,7 +1025,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                                 <>
                                   <div className="font-semibold text-slate-900 flex items-center gap-2">
                                     <FileText size={16} className="text-slate-400" />
-                                    {entry.title}
+                                    {renderPropertyValue(entry.title)}
                                   </div>
                                   {progress && (
                                     <div className="mt-2 flex items-center gap-2 w-48">
@@ -927,7 +1039,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                               ) : col.type === 'select' ? (
                                 props[col.id] ? (
                                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
-                                    {props[col.id]}
+                                    {renderPropertyValue(props[col.id])}
                                   </span>
                                 ) : null
                               ) : col.type === 'checkbox' ? (
@@ -937,17 +1049,17 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                               ) : col.type === 'url' ? (
                                 props[col.id] ? (
                                   <a 
-                                    href={props[col.id].startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
+                                    href={String(props[col.id]).startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
                                     target="_blank" 
                                     rel="noopener noreferrer"
                                     className="text-primary hover:underline truncate block"
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    {props[col.id]}
+                                    {renderPropertyValue(props[col.id])}
                                   </a>
                                 ) : null
                               ) : (
-                                props[col.id] || ''
+                                renderPropertyValue(props[col.id]) || ''
                               )}
                             </td>
                           ))}
@@ -979,14 +1091,14 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
             <div className="flex gap-6 overflow-x-auto pb-8 items-start min-h-[500px]">
               {statuses.map(status => {
                 const columnPages = sortedAndFilteredPages.filter(p => {
-                  const props = JSON.parse(p.properties || '{}');
-                  return props[statusCol?.id || 'status'] === status;
+                  const props = safeJsonParse<Record<string, any>>(p.properties, {});
+                  return renderPropertyValue(props[statusCol?.id || 'status']) === renderPropertyValue(status);
                 });
                 return (
-                  <div key={status} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-2xl p-4 border border-slate-200/60">
+                  <div key={renderPropertyValue(status)} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-2xl p-4 border border-slate-200/60">
                     <div className="flex items-center justify-between mb-4 px-1">
                       <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                        {status} 
+                        {renderPropertyValue(status)} 
                         <span className="bg-slate-200 text-slate-600 text-xs py-0.5 px-2 rounded-full font-semibold">{columnPages.length}</span>
                       </h3>
                       <button 
@@ -1001,7 +1113,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                     </div>
                     <div className="flex flex-col gap-3">
                       {columnPages.map(page => {
-                        const props = JSON.parse(page.properties || '{}');
+                        const props = safeJsonParse<Record<string, any>>(page.properties, {});
                         const progress = getTaskProgress(page.id);
                         return (
                           <div 
@@ -1010,7 +1122,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                             className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-primary/40 transition-all group"
                           >
                             <div className="flex justify-between items-start mb-2">
-                              <h4 className="font-bold text-slate-900 leading-tight pr-4">{page.title}</h4>
+                              <h4 className="font-bold text-slate-900 leading-tight pr-4">{renderPropertyValue(page.title)}</h4>
                               <button 
                                 onClick={(e) => { e.stopPropagation(); deletePage(page.id); }}
                                 className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
@@ -1020,17 +1132,20 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                             </div>
                             
                             <div className="flex flex-wrap gap-1.5 mt-3">
-                              {localColumns.filter(c => c.id !== statusCol?.id && props[c.id] && (c.visibleInBoard !== false)).map(col => (
-                                <span key={col.id} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-500 border border-slate-100 uppercase tracking-wider">
-                                  {col.type === 'checkbox' ? (
-                                    props[col.id] === 'true' ? <CheckSquare size={12} className="text-primary" /> : <Square size={12} className="text-slate-300" />
-                                  ) : col.type === 'url' ? (
-                                    <span className="truncate max-w-[150px]">{props[col.id]}</span>
-                                  ) : (
-                                    props[col.id]
-                                  )}
-                                </span>
-                              ))}
+                              {localColumns.filter(c => c.id !== statusCol?.id && safeJsonParse<Record<string, any>>(page.properties, {})[c.id] && (c.visibleInBoard !== false)).map(col => {
+                                const props = safeJsonParse<Record<string, any>>(page.properties, {});
+                                return (
+                                  <span key={col.id} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-500 border border-slate-100 uppercase tracking-wider">
+                                    {col.type === 'checkbox' ? (
+                                      props[col.id] === 'true' ? <CheckSquare size={12} className="text-primary" /> : <Square size={12} className="text-slate-300" />
+                                    ) : col.type === 'url' ? (
+                                      <span className="truncate max-w-[150px]">{renderPropertyValue(props[col.id])}</span>
+                                    ) : (
+                                      renderPropertyValue(props[col.id])
+                                    )}
+                                  </span>
+                                );
+                              })}
                             </div>
 
                             {progress && (
@@ -1066,55 +1181,59 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         </div>
       </div>
 
-      {/* Side-peek Overlay */}
-      {selectedEntry && (
-        <>
-          <div 
-            className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-20 transition-opacity" 
-            onClick={() => setSelectedEntry(null)}
-          />
-          <div className="absolute inset-y-0 right-0 w-full md:w-[600px] bg-white border-l border-slate-200 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right duration-200">
-            <div className="flex items-center justify-between px-4 md:px-8 py-4 border-b border-slate-100">
-              <div className="flex items-center gap-4">
-                {!selectedEntry.isTemplate && (
-                  <button 
-                    onClick={() => {
-                      setCurrentParentId(selectedEntry.id);
-                      setSelectedEntry(null);
-                    }}
-                    className="flex items-center gap-1.5 text-sm font-bold text-primary hover:text-primary/80 transition-colors"
-                  >
-                    <Maximize2 size={16} /> Open as Page
-                  </button>
-                )}
-                {selectedEntry.isTemplate && (
-                  <span className="text-xs font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded uppercase tracking-wider">Template</span>
-                )}
-              </div>
-              <button onClick={() => setSelectedEntry(null)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
-                <span className="text-sm font-bold">Close</span>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <div className="p-6 md:p-10 space-y-8 md:space-y-10">
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-primary">
-                    <Palette size={24} />
-                    <span className="text-xs font-black uppercase tracking-[0.2em]">Project Note</span>
-                  </div>
-                  <TextareaAutosize 
-                    value={selectedEntry.title}
-                    onChange={(e) => updatePage(selectedEntry.id, { title: e.target.value })}
-                    className="text-2xl md:text-4xl font-black text-slate-900 leading-tight w-full outline-none bg-transparent placeholder-slate-300 resize-none"
-                    placeholder="Untitled"
-                    minRows={1}
-                  />
+      {/* Page Opener Router */}
+      {currentDatabaseId && (
+        <PageOpener
+          pageId={selectedEntry?.id || null}
+          databaseId={currentDatabaseId}
+          isOpen={!!selectedEntry}
+          onClose={() => setSelectedEntry(null)}
+          title={renderPropertyValue(selectedEntry?.title)}
+        >
+          {selectedEntry && (
+            <div className="space-y-8 md:space-y-10">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-primary">
+                  <Palette size={24} />
+                  <span className="text-xs font-black uppercase tracking-[0.2em]">Project Note</span>
                 </div>
-                
-                <div className="grid grid-cols-1 gap-px bg-slate-100 rounded-xl overflow-hidden border border-slate-100">
-                  {localColumns.filter(c => c.id !== 'title').map(col => {
-                    const props = JSON.parse(selectedEntry.properties || '{}');
+                <TextareaAutosize 
+                  value={renderPropertyValue(selectedEntry.title)}
+                  onChange={(e) => updatePage(selectedEntry.id, { title: e.target.value })}
+                  className="text-2xl md:text-4xl font-black text-slate-900 leading-tight w-full outline-none bg-transparent placeholder-slate-300 resize-none"
+                  placeholder="Untitled"
+                  minRows={1}
+                />
+              </div>
+              
+              <div className="grid grid-cols-1 gap-px bg-slate-100 rounded-xl overflow-hidden border border-slate-100">
+                {(() => {
+                  const config = getLayoutConfig(currentDatabaseId || '');
+                  let displayColumns = [...localColumns.filter(c => c.id !== 'title')];
+                  
+                  if (config.properties.length > 0) {
+                    // Sort by config order
+                    displayColumns.sort((a, b) => {
+                      const indexA = config.properties.findIndex(p => p.id === a.id);
+                      const indexB = config.properties.findIndex(p => p.id === b.id);
+                      if (indexA === -1 && indexB === -1) return 0;
+                      if (indexA === -1) return 1;
+                      if (indexB === -1) return -1;
+                      return indexA - indexB;
+                    });
+
+                    // Filter by visibility
+                    displayColumns = displayColumns.filter(col => {
+                      const propConfig = config.properties.find(p => p.id === col.id);
+                      if (!propConfig) return true;
+                      if (propConfig.visibility === 'hide') return false;
+                      // 'show' and 'always-show' are visible
+                      return true;
+                    });
+                  }
+
+                  return displayColumns.map(col => {
+                    const props = safeJsonParse<Record<string, any>>(selectedEntry.properties, {});
                     return (
                       <div key={col.id} className="grid grid-cols-[140px_1fr] bg-white py-3 px-4">
                         <div className="flex items-center gap-2 text-slate-400 text-sm">
@@ -1123,7 +1242,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                         <div className="flex items-center">
                           {col.type === 'select' ? (
                             <select 
-                              value={props[col.id] || ''}
+                              value={renderPropertyValue(props[col.id]) || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
                                 updatePage(selectedEntry.id, { properties: JSON.stringify(newProps) });
@@ -1131,8 +1250,10 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                               className="px-2 py-1 rounded text-xs font-bold outline-none cursor-pointer bg-slate-100 text-slate-700"
                             >
                               <option value="">Empty</option>
-                              {col.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                              {!col.options?.includes(props[col.id]) && props[col.id] && <option value={props[col.id]}>{props[col.id]}</option>}
+                              {col.options?.map(opt => <option key={renderPropertyValue(opt)} value={renderPropertyValue(opt)}>{renderPropertyValue(opt)}</option>)}
+                              {props[col.id] && !col.options?.map(o => renderPropertyValue(o)).includes(renderPropertyValue(props[col.id])) && (
+                                <option value={renderPropertyValue(props[col.id])}>{renderPropertyValue(props[col.id])}</option>
+                              )}
                             </select>
                           ) : col.type === 'checkbox' ? (
                             <button
@@ -1147,7 +1268,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                           ) : col.type === 'url' ? (
                             <input 
                               type="url"
-                              value={props[col.id] || ''}
+                              value={renderPropertyValue(props[col.id]) || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
                                 updatePage(selectedEntry.id, { properties: JSON.stringify(newProps) });
@@ -1157,7 +1278,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                             />
                           ) : (
                             <TextareaAutosize 
-                              value={props[col.id] || ''}
+                              value={renderPropertyValue(props[col.id]) || ''}
                               onChange={(e) => {
                                 const newProps = { ...props, [col.id]: e.target.value };
                                 updatePage(selectedEntry.id, { properties: JSON.stringify(newProps) });
@@ -1170,64 +1291,71 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                         </div>
                       </div>
                     );
-                  })}
-                </div>
+                  });
+                })()}
+              </div>
 
-                <div className="space-y-6">
-                  <RichTextEditor 
-                    content={selectedEntry.content || ''} 
-                    onChange={(content) => updatePage(selectedEntry.id, { content })} 
-                    attachments={attachments}
-                    onAddAttachment={handleAddAttachment}
-                    onRemoveAttachment={handleRemoveAttachment}
-                  />
-                  
-                  {!selectedEntry.isTemplate && (
-                    <div className="space-y-3 pt-6 border-t border-slate-100">
-                      <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Sub-pages (Tasks)</h3>
-                      <div className="space-y-2">
-                        {pages.filter(p => p.parentId === selectedEntry.id).map(subPage => {
-                          const subProps = JSON.parse(subPage.properties || '{}');
-                          const statusId = statusCol?.id || 'status';
-                          const isDone = subProps[statusId]?.toLowerCase() === 'done';
-                          
-                          return (
-                            <div 
-                              key={subPage.id}
-                              className="flex items-center gap-3 group cursor-pointer p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-200 transition-all"
-                              onClick={() => {
-                                setSelectedEntry(subPage);
-                              }}
-                            >
-                              <div onClick={(e) => {
-                                e.stopPropagation();
-                                const newProps = { ...subProps, [statusId]: isDone ? 'Todo' : 'Done' };
-                                updatePage(subPage.id, { properties: JSON.stringify(newProps) });
-                              }}>
-                                {isDone ? <CheckSquare className="text-primary" size={18} /> : <Square className="text-slate-300" size={18} />}
-                              </div>
-                              <span className={`text-sm font-medium ${isDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{subPage.title}</span>
+              <div className="space-y-6">
+                <RichTextEditor 
+                  content={selectedEntry.content || ''} 
+                  onChange={(content) => updatePage(selectedEntry.id, { content })} 
+                  attachments={attachments}
+                  onAddAttachment={handleAddAttachment}
+                  onRemoveAttachment={handleRemoveAttachment}
+                />
+                
+                {!selectedEntry.isTemplate && (
+                  <div className="space-y-3 pt-6 border-t border-slate-100">
+                    <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400">Sub-pages (Tasks)</h3>
+                    <div className="space-y-2">
+                      {pages.filter(p => p.parentId === selectedEntry.id).map(subPage => {
+                        const subProps = safeJsonParse<Record<string, any>>(subPage.properties, {});
+                        const statusId = statusCol?.id || 'status';
+                        const isDone = String(subProps[statusId] || '').toLowerCase() === 'done';
+                        
+                        return (
+                          <div 
+                            key={subPage.id}
+                            className="flex items-center gap-3 group cursor-pointer p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-200 transition-all"
+                            onClick={() => {
+                              setSelectedEntry(subPage);
+                            }}
+                          >
+                            <div onClick={(e) => {
+                              e.stopPropagation();
+                              const newProps = { ...subProps, [statusId]: isDone ? 'Todo' : 'Done' };
+                              updatePage(subPage.id, { properties: JSON.stringify(newProps) });
+                            }}>
+                              {isDone ? <CheckSquare className="text-primary" size={18} /> : <Square className="text-slate-300" size={18} />}
                             </div>
-                          );
-                        })}
-                      </div>
-                      <button 
-                        onClick={() => createPage(selectedEntry.id)}
-                        className="flex items-center gap-2 text-sm font-bold text-primary hover:text-primary/80 transition-colors mt-2"
-                      >
-                        <Plus size={16} /> Add Sub-page
-                      </button>
+                            <span className={`text-sm font-medium ${isDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{renderPropertyValue(subPage.title)}</span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  )}
-                </div>
+                    <button 
+                      onClick={() => createPage(selectedEntry.id)}
+                      className="flex items-center gap-2 text-sm font-bold text-primary hover:text-primary/80 transition-colors mt-2"
+                    >
+                      <Plus size={16} /> Add Sub-page
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="px-8 py-4 border-t border-slate-100 flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              <span>Last edited just now</span>
-              <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-green-500"></span> Live Session</span>
-            </div>
-          </div>
-        </>
+          )}
+        </PageOpener>
+      )}
+
+      {isCSVModalOpen && csvData && (
+        <CSVMappingModal
+          isOpen={isCSVModalOpen}
+          onClose={() => setIsCSVModalOpen(false)}
+          headers={csvData.headers}
+          data={csvData.data}
+          fileName={csvData.fileName}
+          onImport={handleCSVImport}
+        />
       )}
     </main>
   );

@@ -10,15 +10,27 @@ export async function apiFetch(url: string, options: RequestInit = {}) {
     ...options.headers,
   };
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'API request failed');
+    if (!response.ok) {
+      let errorMessage = 'API request failed';
+      try {
+        const error = await response.json();
+        errorMessage = error.error || error.message || errorMessage;
+      } catch (e) {
+        // Fallback to status text if JSON parsing fails
+        errorMessage = response.statusText || errorMessage;
+      }
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error(`API Error [${options.method || 'GET'} ${url}]:`, error);
+    throw error;
   }
-
-  return response.json();
 }

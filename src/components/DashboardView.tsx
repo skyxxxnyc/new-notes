@@ -3,6 +3,7 @@ import { Responsive as ResponsiveGridLayout, useContainerWidth } from 'react-gri
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { apiFetch } from '../lib/api';
+import { safeJsonParse, renderPropertyValue } from '../lib/utils';
 
 const ResponsiveGridLayoutAny = ResponsiveGridLayout as any;
 import { 
@@ -140,7 +141,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
   };
 
   const currentDashboard = dashboards.find(d => d.id === currentDashboardId);
-  const widgets: Widget[] = currentDashboard && currentDashboard.widgets ? JSON.parse(currentDashboard.widgets) : [];
+  const widgets: Widget[] = currentDashboard ? safeJsonParse<Widget[]>(currentDashboard.widgets, []) : [];
 
   const onLayoutChange = (layout: any) => {
     if (!currentDashboard || !isEditing) return;
@@ -197,7 +198,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
               <div className="flex flex-col gap-1">
                 {recentNotes.map(note => (
                   <div key={note.id} className="px-3 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{note.title}</p>
+                    <p className="text-sm font-semibold text-slate-800 truncate">{renderPropertyValue(note.title)}</p>
                     <p className="text-xs text-slate-400 truncate mt-0.5">{note.content.replace(/<[^>]+>/g, '') || 'Empty note'}</p>
                   </div>
                 ))}
@@ -222,18 +223,18 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
             ) : (
               <div className="flex flex-col gap-1">
                 {tasks.map(task => {
-                  const props = JSON.parse(task.properties || '{}');
-                  const isDone = props.status?.toLowerCase() === 'done';
+                  const props = safeJsonParse<Record<string, any>>(task.properties, {});
+                  const isDone = String(props.status || '').toLowerCase() === 'done';
                   return (
                     <div key={task.id} className="px-3 py-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors flex items-start gap-3">
                       <div className="mt-0.5">
                         {isDone ? <CheckSquare size={16} className="text-primary" /> : <Square size={16} className="text-slate-300" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-semibold truncate ${isDone ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{task.title}</p>
+                        <p className={`text-sm font-semibold truncate ${isDone ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{renderPropertyValue(task.title)}</p>
                         {props.status && (
                           <span className="inline-block mt-1 px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-wider rounded">
-                            {props.status}
+                            {renderPropertyValue(props.status)}
                           </span>
                         )}
                       </div>
@@ -264,7 +265,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
               <div className="flex flex-col gap-2">
                 {dbPages.slice(0, 5).map(page => (
                   <div key={page.id} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded border border-slate-100">
-                    <span className="text-sm font-medium text-slate-700 truncate">{page.title}</span>
+                    <span className="text-sm font-medium text-slate-700 truncate">{renderPropertyValue(page.title)}</span>
                   </div>
                 ))}
                 {dbPages.length === 0 && <div className="text-slate-400 text-sm text-center py-4">No entries</div>}
@@ -273,7 +274,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
               <div className="flex gap-2 h-full">
                 {['Todo', 'In Progress', 'Done'].map(status => {
                   const colPages = dbPages.filter(p => {
-                    const props = JSON.parse(p.properties || '{}');
+                    const props = safeJsonParse<Record<string, any>>(p.properties, {});
                     return props.status === status;
                   });
                   return (
@@ -281,7 +282,7 @@ export default function DashboardView({ onToggleSidebar }: { onToggleSidebar: ()
                       <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">{status}</h4>
                       {colPages.slice(0, 3).map(page => (
                         <div key={page.id} className="bg-white p-2 rounded border border-slate-200 shadow-sm text-xs font-medium text-slate-700 truncate">
-                          {page.title}
+                          {renderPropertyValue(page.title)}
                         </div>
                       ))}
                     </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, FileText, Database, LayoutGrid, X } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { renderPropertyValue } from '../lib/utils';
 
 // Import MOCK_NOTES to include them in search results
 const MOCK_NOTES = [
@@ -193,7 +194,7 @@ export default function GlobalSearch({ isOpen, onClose, onNavigate }: GlobalSear
                   >
                     <FileText size={16} className={isSelected ? 'text-primary' : 'text-slate-400'} />
                     <div className="flex flex-col">
-                      <span className={`font-medium ${isSelected ? 'text-primary' : 'text-slate-700'}`}>{p.title}</span>
+                      <span className={`font-medium ${isSelected ? 'text-primary' : 'text-slate-700'}`}>{renderPropertyValue(p.title)}</span>
                       <span className={`text-xs line-clamp-1 ${isSelected ? 'text-primary/70' : 'text-slate-400'}`}>{p.content.replace(/<[^>]+>/g, '')}</span>
                     </div>
                   </div>
@@ -216,7 +217,7 @@ export default function GlobalSearch({ isOpen, onClose, onNavigate }: GlobalSear
                   >
                     <FileText size={16} className={isSelected ? 'text-primary' : 'text-slate-400'} />
                     <div className="flex flex-col">
-                      <span className={`font-medium ${isSelected ? 'text-primary' : 'text-slate-700'}`}>{n.title}</span>
+                      <span className={`font-medium ${isSelected ? 'text-primary' : 'text-slate-700'}`}>{renderPropertyValue(n.title)}</span>
                       <span className={`text-xs line-clamp-1 ${isSelected ? 'text-primary/70' : 'text-slate-400'}`}>{n.snippet}</span>
                     </div>
                   </div>
