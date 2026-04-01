@@ -170,14 +170,23 @@ export const importNotionDatabase = async (databaseId: string) => {
   
   console.log('Notion data fetched via proxy');
 
+  // Find the title property name
+  const titlePropertyName = Object.keys(dbResponse.properties).find(
+    key => dbResponse.properties[key].type === 'title'
+  );
+
   // Send to our backend to import into Supabase
   const pagesWithContent = await Promise.all(pagesResponse.results.map(async (page: any) => {
     const content = await getPageContent(page.id);
+    
+    let title = "Untitled";
+    if (titlePropertyName && page.properties[titlePropertyName]) {
+        title = page.properties[titlePropertyName].title[0]?.plain_text || "Untitled";
+    }
+
     return {
       id: page.id,
-      title: page.properties.Name?.title[0]?.plain_text || 
-             page.properties.title?.title[0]?.plain_text || 
-             "Untitled",
+      title,
       content,
       properties: JSON.stringify(page.properties),
     };

@@ -1,7 +1,10 @@
 -- Run this SQL in your Supabase SQL Editor to create the app_agents table
 
+-- Drop the table if it exists to ensure correct schema (UUID id)
+DROP TABLE IF EXISTS public.app_notion_config;
+
 CREATE TABLE IF NOT EXISTS public.app_notion_config (
-  id SERIAL PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   token TEXT NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -18,9 +21,9 @@ CREATE POLICY "Allow authenticated users to read and update notion config" ON pu
   WITH CHECK (true);
 
 -- Insert default row if it doesn't exist
-INSERT INTO public.app_notion_config (id, token)
-VALUES (1, '')
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO public.app_notion_config (token)
+VALUES ('')
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.app_agents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

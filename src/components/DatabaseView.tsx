@@ -4,21 +4,22 @@ import {
   X, Maximize2, CheckSquare, Square, PlusCircle, 
   Palette, Calendar, AlertCircle, User, CircleDot,
   ChevronRight, FileText, Trash2, Database as DatabaseIcon,
-  Settings, Type, Hash, AlignLeft, Edit2,
+  Settings, Type, Hash, AlignLeft, Edit2, Star,
   Download, Upload, LayoutGrid, List as ListIcon, Menu, Link, Image, CalendarDays, Clock, Rss,
-  SlidersHorizontal
+  SlidersHorizontal, Sparkles, Loader2
 } from 'lucide-react';
 import Papa from 'papaparse';
 import TextareaAutosize from 'react-textarea-autosize';
 import RichTextEditor from './RichTextEditor';
 import { apiFetch } from '../lib/api';
-import { safeJsonParse, renderPropertyValue } from '../lib/utils';
+import { safeJsonParse, renderPropertyValue, cn } from '../lib/utils';
 import CSVMappingModal from './CSVMappingModal';
 import LayoutModeSelector from './LayoutModeSelector';
 import PageOpener from './PageOpener';
 import CustomizeLayoutPopover from './CustomizeLayoutPopover';
 import { AnimatePresence, motion } from 'motion/react';
 import { useLayout } from '../contexts/LayoutContext';
+import { generateAutofillValue } from '../services/aiService';
 
   type Column = {
   id: string;
@@ -27,6 +28,11 @@ import { useLayout } from '../contexts/LayoutContext';
   width: number;
   options?: string[];
   visibleInBoard?: boolean;
+  ai_autofill?: {
+    prompt: string;
+    source_properties: string[];
+    trigger: "manual" | "on_create" | "on_update";
+  };
 };
 
 type Database = {
@@ -34,6 +40,7 @@ type Database = {
   name: string;
   icon: string;
   columns: string; // JSON string
+  isFavorite?: boolean;
 };
 
 type Page = {
@@ -46,10 +53,16 @@ type Page = {
   isTemplate: number;
 };
 
-export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+interface DatabaseViewProps {
+  databaseId?: string | null;
+  onSelectPage?: (id: string) => void;
+  onToggleSidebar?: () => void;
+}
+
+export default function DatabaseView({ databaseId, onSelectPage, onToggleSidebar }: DatabaseViewProps) {
   const [databases, setDatabases] = useState<Database[]>([]);
   const [pages, setPages] = useState<Page[]>([]);
-  const [currentDatabaseId, setCurrentDatabaseId] = useState<string | null>(null);
+  const [currentDatabaseId, setCurrentDatabaseId] = useState<string | null>(databaseId || null);
   const [selectedEntry, setSelectedEntry] = useState<Page | null>(null);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -66,6 +79,8 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   const moreMenuTriggerRef = React.useRef<HTMLButtonElement>(null);
   const moreMenuRef = React.useRef<HTMLDivElement>(null);
   const { getLayoutConfig } = useLayout();
+  const [isAutofilling, setIsAutofilling] = useState<Record<string, boolean>>({});
+  const [autofillConfigModal, setAutofillConfigModal] = useState<{ isOpen: boolean, colId: string, prompt: string, trigger: "manual" | "on_create" | "on_update", source_properties: string[] } | null>(null);
 
   // Handle click outside for more menu
   useEffect(() => {
@@ -141,16 +156,19 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   };
 
   useEffect(() => {
+    if (databaseId) {
+      setCurrentDatabaseId(databaseId);
+      setLocalColumns([]);
+    }
+  }, [databaseId]);
+
+  useEffect(() => {
     fetchDatabases();
 
-    const handleNavigateDb = (e: any) => {
-      if (e.detail.id) {
-        setCurrentDatabaseId(e.detail.id);
-        setCurrentParentId(null);
-        setSelectedEntry(null);
-      }
+    const handlePagesChanged = () => {
+      if (currentDatabaseId) fetchPages(currentDatabaseId);
     };
-    
+
     const handleNavigatePage = (e: any) => {
       if (e.detail.databaseId) {
         setCurrentDatabaseId(e.detail.databaseId);
@@ -161,13 +179,23 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
       }
     };
 
-    window.addEventListener('navigate-database', handleNavigateDb);
-    window.addEventListener('navigate-page', handleNavigatePage);
-    return () => {
-      window.removeEventListener('navigate-database', handleNavigateDb);
-      window.removeEventListener('navigate-page', handleNavigatePage);
+    const handleNavigateDatabaseView = (e: any) => {
+      const { databaseId, viewMode } = e.detail;
+      setCurrentDatabaseId(databaseId);
+      setViewMode(viewMode);
+      setCurrentParentId(null);
+      setSelectedEntry(null);
     };
-  }, []);
+
+    window.addEventListener('pages-changed', handlePagesChanged);
+    window.addEventListener('navigate-page', handleNavigatePage);
+    window.addEventListener('navigate-database-view', handleNavigateDatabaseView);
+    return () => {
+      window.removeEventListener('pages-changed', handlePagesChanged);
+      window.removeEventListener('navigate-page', handleNavigatePage);
+      window.removeEventListener('navigate-database-view', handleNavigateDatabaseView);
+    };
+  }, [currentDatabaseId]);
 
   useEffect(() => {
     if (currentDatabaseId) {
@@ -219,6 +247,85 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
     } catch (error) {
       console.error('Failed to update database:', error);
       fetchDatabases();
+    }
+  };
+
+  const configureAutofill = async (colId: string) => {
+    if (!currentDb) return;
+    const col = localColumns.find(c => c.id === colId);
+    if (!col) return;
+
+    setAutofillConfigModal({
+      isOpen: true,
+      colId,
+      prompt: col.ai_autofill?.prompt || "",
+      trigger: col.ai_autofill?.trigger || "manual",
+      source_properties: col.ai_autofill?.source_properties || []
+    });
+  };
+
+  const saveAutofillConfig = () => {
+    if (!currentDb || !autofillConfigModal) return;
+    
+    if (autofillConfigModal.prompt === "") {
+      updateDatabase(currentDb.id, { columns: JSON.stringify(localColumns.map(c => c.id === autofillConfigModal.colId ? { ...c, ai_autofill: undefined } : c)) });
+    } else {
+      updateDatabase(currentDb.id, { columns: JSON.stringify(localColumns.map(c => c.id === autofillConfigModal.colId ? { 
+        ...c, 
+        ai_autofill: { 
+          prompt: autofillConfigModal.prompt, 
+          trigger: autofillConfigModal.trigger,
+          source_properties: autofillConfigModal.source_properties
+        } 
+      } : c)) });
+    }
+    setAutofillConfigModal(null);
+  };
+
+  const runAutofill = async (pageId: string, colId: string) => {
+    if (!currentDb) return;
+    const col = localColumns.find(c => c.id === colId);
+    if (!col || !col.ai_autofill) return;
+
+    const page = pages.find(p => p.id === pageId);
+    if (!page) return;
+
+    const key = `${pageId}-${colId}`;
+    setIsAutofilling(prev => ({ ...prev, [key]: true }));
+    // @ts-ignore
+    window.appToast?.(`Generating autofill for ${col.name}...`, 'info');
+
+    try {
+      const props = safeJsonParse<Record<string, any>>(page.properties, {});
+      const context = {
+        title: page.title,
+        content: page.content,
+        ...props
+      };
+
+      const result = await generateAutofillValue(col.ai_autofill.prompt, context);
+      
+      if (result) {
+        const updatedProps = { ...props, [colId]: result };
+        await apiFetch(`/api/pages/${pageId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ properties: JSON.stringify(updatedProps) })
+        });
+        
+        setPages(prev => prev.map(p => p.id === pageId ? { ...p, properties: JSON.stringify(updatedProps) } : p));
+        window.dispatchEvent(new CustomEvent('pages-changed'));
+        // @ts-ignore
+        window.appToast?.(`Successfully autofilled ${col.name}`, 'success');
+      } else {
+        // @ts-ignore
+        window.appToast?.(`Autofill returned empty for ${col.name}`, 'error');
+      }
+    } catch (error) {
+      console.error('Autofill failed:', error);
+      // @ts-ignore
+      window.appToast?.(`Failed to autofill ${col.name}`, 'error');
+    } finally {
+      setIsAutofilling(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -284,7 +391,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
         method: 'POST',
         body: JSON.stringify({ ...initialData, parentId, databaseId: currentDatabaseId })
       });
-      setPages([...pages, newPage]);
+      
+      setPages(prev => [...prev, newPage]);
+
       if (parentId || !templateId) {
         setSelectedEntry(newPage);
       }
@@ -323,9 +432,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   };
 
   const updatePage = async (id: string, updates: Partial<Page>) => {
-    setPages(pages.map(p => p.id === id ? { ...p, ...updates } : p));
+    setPages(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     if (selectedEntry?.id === id) {
-      setSelectedEntry({ ...selectedEntry, ...updates });
+      setSelectedEntry(prev => prev ? { ...prev, ...updates } : null);
     }
 
     try {
@@ -536,7 +645,9 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
   
   const breadcrumbs = [];
   let curr = currentParentId;
-  while (curr) {
+  const visited = new Set<string>();
+  while (curr && !visited.has(curr)) {
+    visited.add(curr);
     const page = pages.find(p => p.id === curr);
     if (page) {
       breadcrumbs.unshift(page);
@@ -663,6 +774,15 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
               <option key={db.id} value={db.id}>{db.name}</option>
             ))}
           </select>
+          {currentDb && (
+            <button 
+              onClick={() => updateDatabase(currentDb.id, { isFavorite: !currentDb.isFavorite })}
+              className={`ml-1 p-1 rounded-full transition-colors ${currentDb.isFavorite ? 'text-yellow-400 hover:bg-yellow-50' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
+              title={currentDb.isFavorite ? "Unfavorite Database" : "Favorite Database"}
+            >
+              <Star size={16} fill={currentDb.isFavorite ? 'currentColor' : 'none'} />
+            </button>
+          )}
           <button 
             onClick={createDatabase}
             className="ml-2 p-1 text-slate-400 hover:text-primary hover:bg-slate-100 rounded transition-colors"
@@ -979,6 +1099,7 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                                 <option value="url">URL</option>
                               </select>
                               <button onClick={() => renameColumn(col.id)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit2 size={12} /></button>
+                              <button onClick={() => configureAutofill(col.id)} className={cn("p-1 rounded transition-colors", col.ai_autofill ? "bg-primary/10 text-primary" : "hover:bg-slate-200 text-slate-500")} title="Configure AI Autofill"><Sparkles size={12} /></button>
                               <button onClick={() => removeColumn(col.id)} className="p-1 hover:bg-slate-200 rounded text-red-500"><Trash2 size={12} /></button>
                             </div>
                           )}
@@ -1020,47 +1141,64 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
                             />
                           </td>
                           {localColumns.map(col => (
-                            <td key={col.id} className="px-4 py-4 text-sm text-slate-600 truncate">
-                              {col.id === 'title' ? (
-                                <>
-                                  <div className="font-semibold text-slate-900 flex items-center gap-2">
-                                    <FileText size={16} className="text-slate-400" />
-                                    {renderPropertyValue(entry.title)}
-                                  </div>
-                                  {progress && (
-                                    <div className="mt-2 flex items-center gap-2 w-48">
-                                      <div className="h-1.5 flex-1 bg-slate-200 rounded-full overflow-hidden">
-                                        <div className="h-full bg-primary rounded-full" style={{ width: `${progress.percentage}%` }}></div>
+                            <td key={col.id} className="px-4 py-4 text-sm text-slate-600 truncate max-w-[200px]">
+                              <div className="flex items-center justify-between group/cell">
+                                <div className="truncate flex-1">
+                                  {col.name.toLowerCase() === 'title' || col.name.toLowerCase() === 'name' ? (
+                                    <>
+                                      <div className="font-semibold text-slate-900 flex items-center gap-2">
+                                        <FileText size={16} className="text-slate-400" />
+                                        {renderPropertyValue(entry.title)}
                                       </div>
-                                      <span className="text-[10px] font-bold text-slate-400">{progress.completed}/{progress.total}</span>
+                                      {progress && (
+                                        <div className="mt-2 flex items-center gap-2 w-48">
+                                          <div className="h-1.5 flex-1 bg-slate-200 rounded-full overflow-hidden">
+                                            <div className="h-full bg-primary rounded-full" style={{ width: `${progress.percentage}%` }}></div>
+                                          </div>
+                                          <span className="text-[10px] font-bold text-slate-400">{progress.completed}/{progress.total}</span>
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : col.type === 'select' ? (
+                                    props[col.id] ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
+                                        {renderPropertyValue(props[col.id])}
+                                      </span>
+                                    ) : null
+                                  ) : col.type === 'checkbox' ? (
+                                    <div className="flex items-center justify-center">
+                                      {props[col.id] === 'true' ? <CheckSquare size={16} className="text-primary" /> : <Square size={16} className="text-slate-300" />}
                                     </div>
+                                  ) : col.type === 'url' ? (
+                                    props[col.id] ? (
+                                      <a 
+                                        href={String(props[col.id]).startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="text-primary hover:underline truncate block"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {renderPropertyValue(props[col.id])}
+                                      </a>
+                                    ) : null
+                                  ) : (
+                                    renderPropertyValue(props[col.id]) || ''
                                   )}
-                                </>
-                              ) : col.type === 'select' ? (
-                                props[col.id] ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
-                                    {renderPropertyValue(props[col.id])}
-                                  </span>
-                                ) : null
-                              ) : col.type === 'checkbox' ? (
-                                <div className="flex items-center justify-center">
-                                  {props[col.id] === 'true' ? <CheckSquare size={16} className="text-primary" /> : <Square size={16} className="text-slate-300" />}
                                 </div>
-                              ) : col.type === 'url' ? (
-                                props[col.id] ? (
-                                  <a 
-                                    href={String(props[col.id]).startsWith('http') ? props[col.id] : `https://${props[col.id]}`} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="text-primary hover:underline truncate block"
-                                    onClick={(e) => e.stopPropagation()}
+                                {col.ai_autofill && (
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); runAutofill(entry.id, col.id); }}
+                                    disabled={isAutofilling[`${entry.id}-${col.id}`]}
+                                    className={cn(
+                                      "p-1 rounded opacity-0 group-hover/cell:opacity-100 transition-all",
+                                      isAutofilling[`${entry.id}-${col.id}`] ? "text-primary animate-pulse" : "text-slate-400 hover:text-primary hover:bg-primary/5"
+                                    )}
+                                    title="Run AI Autofill"
                                   >
-                                    {renderPropertyValue(props[col.id])}
-                                  </a>
-                                ) : null
-                              ) : (
-                                renderPropertyValue(props[col.id]) || ''
-                              )}
+                                    {isAutofilling[`${entry.id}-${col.id}`] ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           ))}
                           <td className="px-4 py-4 text-center">
@@ -1356,6 +1494,90 @@ export default function DatabaseView({ onToggleSidebar }: { onToggleSidebar: () 
           fileName={csvData.fileName}
           onImport={handleCSVImport}
         />
+      )}
+
+      {autofillConfigModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Sparkles size={20} className="text-primary" />
+                Configure AI Autofill
+              </h3>
+              <button onClick={() => setAutofillConfigModal(null)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Prompt</label>
+                <p className="text-xs text-slate-500 mb-2">Use <code className="bg-slate-100 px-1 rounded">prop('Column Name')</code> to reference other properties.</p>
+                <TextareaAutosize
+                  minRows={3}
+                  value={autofillConfigModal.prompt}
+                  onChange={e => setAutofillConfigModal({ ...autofillConfigModal, prompt: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                  placeholder="e.g., Summarize the content of prop('Description') in 3 bullet points."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Trigger</label>
+                <select
+                  value={autofillConfigModal.trigger}
+                  onChange={e => setAutofillConfigModal({ ...autofillConfigModal, trigger: e.target.value as any })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-sm bg-white"
+                >
+                  <option value="manual">Manual (Click Sparkle Icon)</option>
+                  <option value="on_create">On Create (When row is added)</option>
+                  <option value="on_update">On Update (When dependencies change)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Source Properties (Dependencies)</label>
+                <p className="text-xs text-slate-500 mb-2">Select the columns that should trigger an update when changed (for 'On Update' trigger) or be provided as context.</p>
+                <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-lg p-2 space-y-1">
+                  {localColumns.filter(c => c.id !== autofillConfigModal.colId).map(col => (
+                    <label key={col.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={autofillConfigModal.source_properties.includes(col.id)}
+                        onChange={(e) => {
+                          const newSources = e.target.checked 
+                            ? [...autofillConfigModal.source_properties, col.id]
+                            : autofillConfigModal.source_properties.filter(id => id !== col.id);
+                          setAutofillConfigModal({ ...autofillConfigModal, source_properties: newSources });
+                        }}
+                        className="rounded border-slate-300 text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm text-slate-700">{col.name}</span>
+                    </label>
+                  ))}
+                  {localColumns.length <= 1 && (
+                    <div className="text-sm text-slate-400 p-2 text-center">No other columns available.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setAutofillConfigModal(null)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveAutofillConfig}
+                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+              >
+                Save Configuration
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

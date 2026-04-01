@@ -14,6 +14,50 @@ body {
   font-family: var(--font-sans);
   background-color: var(--color-background-light);
   color: #0f172a;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+html.dark body {
+  background-color: var(--color-background-dark);
+  color: #f1f5f9;
+}
+
+/* Basic dark mode overrides for common elements */
+html.dark .bg-white {
+  background-color: #1e293b;
+}
+html.dark .bg-slate-50 {
+  background-color: #0f172a;
+}
+html.dark .bg-slate-100 {
+  background-color: #1e293b;
+}
+html.dark .text-slate-900 {
+  color: #f8fafc;
+}
+html.dark .text-slate-800 {
+  color: #f1f5f9;
+}
+html.dark .text-slate-700 {
+  color: #e2e8f0;
+}
+html.dark .text-slate-600 {
+  color: #cbd5e1;
+}
+html.dark .text-slate-500 {
+  color: #94a3b8;
+}
+html.dark .border-slate-200 {
+  border-color: #334155;
+}
+html.dark .border-slate-100 {
+  border-color: #1e293b;
+}
+html.dark .hover\:bg-slate-100:hover {
+  background-color: #334155;
+}
+html.dark .hover\:bg-slate-50:hover {
+  background-color: #1e293b;
 }
 
 ::-webkit-scrollbar {
@@ -26,4 +70,7 @@ body {
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 10px;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
 }

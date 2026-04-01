@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, Palette, Type, Database, Search, Loader2, FileText, Key } from 'lucide-react';
 import { searchNotion, importNotionDatabase, importNotionPage, saveNotionToken, getNotionToken } from '../services/notionService';
+import AgentManagement from './AgentManagement';
+import { cn } from '../lib/utils';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: 'settings' | 'agents';
 }
 
 const COLORS = [
@@ -23,7 +26,8 @@ const FONTS = [
   { name: 'Space Grotesk', value: '"Space Grotesk", ui-sans-serif, system-ui, sans-serif' },
 ];
 
-export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+export default function SettingsModal({ isOpen, onClose, initialTab = 'settings' }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<'settings' | 'agents'>(initialTab);
   const [activeColor, setActiveColor] = useState(COLORS[0].value);
   const [activeFont, setActiveFont] = useState(FONTS[0].value);
   const [notionSearchQuery, setNotionSearchQuery] = useState('');
@@ -34,6 +38,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [isSavingToken, setIsSavingToken] = useState(false);
   const [tokenSaved, setTokenSaved] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     const savedColor = localStorage.getItem('theme-color');
@@ -124,154 +132,176 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
-          <h2 className="text-lg font-bold text-slate-800">Settings</h2>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => setActiveTab('settings')}
+              className={cn("text-lg font-bold transition-colors", activeTab === 'settings' ? "text-slate-800" : "text-slate-400 hover:text-slate-600")}
+            >
+              Settings
+            </button>
+            <button 
+              onClick={() => setActiveTab('agents')}
+              className={cn("text-lg font-bold transition-colors", activeTab === 'agents' ? "text-slate-800" : "text-slate-400 hover:text-slate-600")}
+            >
+              Agents
+            </button>
+          </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-50 transition-colors">
             <X size={20} />
           </button>
         </div>
         
-        <div className="p-6 space-y-8 overflow-y-auto">
-          {/* Notion Integration */}
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Database size={18} className="text-slate-400" />
-              <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Notion Integration</h3>
-            </div>
-            
-            <form onSubmit={handleSaveToken} className="mb-6">
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-slate-500">Notion Internal Integration Token</label>
-                <div className="relative">
-                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+        <div className="flex-1 overflow-y-auto">
+          {activeTab === 'settings' ? (
+            <div className="p-6 space-y-8">
+              {/* Notion Integration */}
+              <section>
+                <div className="flex items-center gap-2 mb-4">
+                  <Database size={18} className="text-slate-400" />
+                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Notion Integration</h3>
+                </div>
+                
+                <form onSubmit={handleSaveToken} className="mb-6">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-bold text-slate-500">Notion Internal Integration Token</label>
+                    <div className="relative">
+                      <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input 
+                        type="password" 
+                        placeholder={tokenSaved ? "Token is saved. Enter new token to update..." : "secret_..."}
+                        value={notionTokenInput}
+                        onChange={(e) => setNotionTokenInput(e.target.value)}
+                        className="w-full pl-10 pr-24 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
+                      />
+                      <button 
+                        type="submit"
+                        disabled={isSavingToken || !notionTokenInput.trim()}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 bg-primary text-white rounded-lg text-xs font-bold shadow-sm hover:bg-primary/90 transition-colors disabled:opacity-50"
+                      >
+                        {isSavingToken ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                      </button>
+                    </div>
+                    {tokenError && <p className="text-xs text-red-500 mt-1">{tokenError}</p>}
+                    {tokenSaved && !tokenError && <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><Check size={12} /> Token is configured</p>}
+                  </div>
+                </form>
+                
+                <form onSubmit={handleNotionSearch} className="relative mb-4">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   <input 
-                    type="password" 
-                    placeholder={tokenSaved ? "Token is saved. Enter new token to update..." : "secret_..."}
-                    value={notionTokenInput}
-                    onChange={(e) => setNotionTokenInput(e.target.value)}
-                    className="w-full pl-10 pr-24 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
+                    type="text" 
+                    placeholder="Search Notion (pages or databases)..." 
+                    value={notionSearchQuery}
+                    onChange={(e) => setNotionSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
                   />
                   <button 
                     type="submit"
-                    disabled={isSavingToken || !notionTokenInput.trim()}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 bg-primary text-white rounded-lg text-xs font-bold shadow-sm hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    disabled={isSearchingNotion}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-white text-slate-600 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50"
                   >
-                    {isSavingToken ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                    {isSearchingNotion ? <Loader2 size={14} className="animate-spin" /> : 'Search'}
                   </button>
+                </form>
+
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-2 no-scrollbar">
+                  {notionResults.length > 0 ? (
+                    notionResults.map((result: any) => {
+                      const title = result.title?.[0]?.plain_text || 
+                                    result.properties?.Name?.title?.[0]?.plain_text || 
+                                    result.properties?.title?.title?.[0]?.plain_text || 
+                                    'Untitled';
+                      const isPage = result.object === 'page';
+
+                      return (
+                        <div key={result.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-primary/30 transition-colors">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm">
+                              {result.icon?.emoji || (isPage ? <FileText size={14} className="text-slate-400" /> : <Database size={14} className="text-slate-400" />)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-slate-700 truncate">{title}</p>
+                              <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">{result.object}</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleImport(result)}
+                            disabled={isImporting === result.id}
+                            className="px-3 py-1.5 bg-white text-primary rounded-lg text-xs font-bold shadow-sm hover:bg-primary hover:text-white transition-all disabled:opacity-50"
+                          >
+                            {isImporting === result.id ? <Loader2 size={12} className="animate-spin" /> : 'Import'}
+                          </button>
+                        </div>
+                      );
+                    })
+                  ) : notionSearchQuery && !isSearchingNotion ? (
+                    <p className="text-center py-4 text-xs text-slate-400 font-medium italic">No results found for "{notionSearchQuery}"</p>
+                  ) : !notionSearchQuery && !isSearchingNotion ? (
+                    <button 
+                      onClick={() => handleNotionSearch()}
+                      className="w-full py-4 text-xs text-slate-400 font-bold hover:text-primary transition-colors border-2 border-dashed border-slate-100 rounded-xl"
+                    >
+                      Click to list shared content
+                    </button>
+                  ) : null}
                 </div>
-                {tokenError && <p className="text-xs text-red-500 mt-1">{tokenError}</p>}
-                {tokenSaved && !tokenError && <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><Check size={12} /> Token is configured</p>}
-              </div>
-            </form>
-            
-            <form onSubmit={handleNotionSearch} className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input 
-                type="text" 
-                placeholder="Search Notion (pages or databases)..." 
-                value={notionSearchQuery}
-                onChange={(e) => setNotionSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
-              />
-              <button 
-                type="submit"
-                disabled={isSearchingNotion}
-                className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-white text-slate-600 rounded-lg text-xs font-bold shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-50"
-              >
-                {isSearchingNotion ? <Loader2 size={14} className="animate-spin" /> : 'Search'}
-              </button>
-            </form>
+              </section>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-2 no-scrollbar">
-              {notionResults.length > 0 ? (
-                notionResults.map((result: any) => {
-                  const title = result.title?.[0]?.plain_text || 
-                                result.properties?.Name?.title?.[0]?.plain_text || 
-                                result.properties?.title?.title?.[0]?.plain_text || 
-                                'Untitled';
-                  const isPage = result.object === 'page';
+              {/* Color Theme */}
+              <section>
+                <div className="flex items-center gap-2 mb-4">
+                  <Palette size={18} className="text-slate-400" />
+                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Color Theme</h3>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {COLORS.map((color) => (
+                    <button
+                      key={color.name}
+                      onClick={() => handleColorChange(color.value)}
+                      className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform hover:scale-110 ${activeColor === color.value ? 'ring-2 ring-offset-2 ring-slate-400' : ''}`}
+                      style={{ backgroundColor: color.value }}
+                      title={color.name}
+                    >
+                      {activeColor === color.value && <Check size={16} className="text-white" />}
+                    </button>
+                  ))}
+                </div>
+              </section>
 
-                  return (
-                    <div key={result.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-primary/30 transition-colors">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm">
-                          {result.icon?.emoji || (isPage ? <FileText size={14} className="text-slate-400" /> : <Database size={14} className="text-slate-400" />)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-slate-700 truncate">{title}</p>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">{result.object}</p>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => handleImport(result)}
-                        disabled={isImporting === result.id}
-                        className="px-3 py-1.5 bg-white text-primary rounded-lg text-xs font-bold shadow-sm hover:bg-primary hover:text-white transition-all disabled:opacity-50"
-                      >
-                        {isImporting === result.id ? <Loader2 size={12} className="animate-spin" /> : 'Import'}
-                      </button>
-                    </div>
-                  );
-                })
-              ) : notionSearchQuery && !isSearchingNotion ? (
-                <p className="text-center py-4 text-xs text-slate-400 font-medium italic">No results found for "{notionSearchQuery}"</p>
-              ) : !notionSearchQuery && !isSearchingNotion ? (
-                <button 
-                  onClick={() => handleNotionSearch()}
-                  className="w-full py-4 text-xs text-slate-400 font-bold hover:text-primary transition-colors border-2 border-dashed border-slate-100 rounded-xl"
-                >
-                  Click to list shared content
-                </button>
-              ) : null}
+              {/* Typography */}
+              <section>
+                <div className="flex items-center gap-2 mb-4">
+                  <Type size={18} className="text-slate-400" />
+                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Typography</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {FONTS.map((font) => (
+                    <button
+                      key={font.name}
+                      onClick={() => handleFontChange(font.value)}
+                      className={`px-4 py-3 rounded-xl border text-left transition-colors ${activeFont === font.value ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 hover:border-slate-300 text-slate-700'}`}
+                      style={{ fontFamily: font.value }}
+                    >
+                      <span className="block font-medium">{font.name}</span>
+                      <span className="text-xs opacity-70 mt-1 block">The quick brown fox</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
             </div>
-          </section>
-
-          {/* Color Theme */}
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Palette size={18} className="text-slate-400" />
-              <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Color Theme</h3>
+          ) : (
+            <div className="h-full">
+              <AgentManagement onClose={onClose} onAgentsUpdated={() => {}} />
             </div>
-            <div className="flex flex-wrap gap-3">
-              {COLORS.map((color) => (
-                <button
-                  key={color.name}
-                  onClick={() => handleColorChange(color.value)}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform hover:scale-110 ${activeColor === color.value ? 'ring-2 ring-offset-2 ring-slate-400' : ''}`}
-                  style={{ backgroundColor: color.value }}
-                  title={color.name}
-                >
-                  {activeColor === color.value && <Check size={16} className="text-white" />}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {/* Typography */}
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Type size={18} className="text-slate-400" />
-              <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Typography</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {FONTS.map((font) => (
-                <button
-                  key={font.name}
-                  onClick={() => handleFontChange(font.value)}
-                  className={`px-4 py-3 rounded-xl border text-left transition-colors ${activeFont === font.value ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 hover:border-slate-300 text-slate-700'}`}
-                  style={{ fontFamily: font.value }}
-                >
-                  <span className="block font-medium">{font.name}</span>
-                  <span className="text-xs opacity-70 mt-1 block">The quick brown fox</span>
-                </button>
-              ))}
-            </div>
-          </section>
+          )}
         </div>
-        
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
-          <button onClick={onClose} className="px-4 py-2 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700 transition-colors">
-            Done
-          </button>
-        </div>
+        {activeTab === 'settings' && (
+          <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+            <button onClick={onClose} className="px-4 py-2 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700 transition-colors">
+              Done
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -44,10 +44,17 @@ router.post('/token', async (req: any, res) => {
       return res.status(400).json({ error: 'Token is required' });
     }
 
-    // Upsert the token. We assume there's only one row with id 1.
-    const { error } = await supabase
-      .from('app_notion_config')
-      .upsert({ id: 1, token }, { onConflict: 'id' });
+    // Fetch existing config
+    const { data: existing } = await supabase.from('app_notion_config').select('id').limit(1).maybeSingle();
+    
+    let error;
+    if (existing) {
+      const { error: updateError } = await supabase.from('app_notion_config').update({ token }).eq('id', existing.id);
+      error = updateError;
+    } else {
+      const { error: insertError } = await supabase.from('app_notion_config').insert({ token });
+      error = insertError;
+    }
 
     if (error) {
       if (error.code === '42P01' || error.message?.includes('relation "app_notion_config" does not exist')) {
@@ -78,8 +85,12 @@ router.get('/token', async (req: any, res) => {
     const token = await getNotionToken();
     res.json({ token });
   } catch (error: any) {
-    console.error('Supabase error retrieving Notion token:', error);
-    res.status(500).json({ error: error.message });
+    if (error.message.includes("Notion integration is not configured") || error.message.includes("Notion token not found")) {
+      res.json({ token: null });
+    } else {
+      console.error('Supabase error retrieving Notion token:', error);
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 

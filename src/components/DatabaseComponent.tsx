@@ -210,7 +210,22 @@ export default function DatabaseComponent({ databaseId, onSelectPage, isInline =
           databaseId 
         })
       });
-      setPages([...pages, newPage]);
+      
+      // Check for on_create AI autofill triggers
+      if (database && database.columns) {
+        const dbColumns: Column[] = safeJsonParse(database.columns, []);
+        for (const col of dbColumns) {
+          if (col.ai_autofill && col.ai_autofill.trigger === 'on_create') {
+            setPages(prev => [...prev, newPage]);
+            setTimeout(() => {
+              runAutofill(newPage.id, col.id);
+            }, 100);
+          }
+        }
+      } else {
+        setPages(prev => [...prev, newPage]);
+      }
+
       window.dispatchEvent(new CustomEvent('pages-changed'));
       if (onSelectPage) onSelectPage(newPage);
     } catch (error) {

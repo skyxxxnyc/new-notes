@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Loader2, MessageSquare, Link2, ImageIcon, Smile } from 'lucide-react';
+import { ArrowLeft, Loader2, MessageSquare, Link2, ImageIcon, Smile, Star } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { renderPropertyValue } from '../lib/utils';
 import RichTextEditor from './RichTextEditor';
 import { useLayout } from '../contexts/LayoutContext';
+import Breadcrumbs from './Breadcrumbs';
 
 interface PageDetailViewProps {
   pageId: string;
   onBack: () => void;
+  onNavigate?: (id: string) => void;
 }
 
-const PageDetailView: React.FC<PageDetailViewProps> = ({ pageId, onBack }) => {
+const PageDetailView: React.FC<PageDetailViewProps> = ({ pageId, onBack, onNavigate }) => {
   const [page, setPage] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { getLayoutConfig } = useLayout();
@@ -45,6 +47,21 @@ const PageDetailView: React.FC<PageDetailViewProps> = ({ pageId, onBack }) => {
     }
   };
 
+  const toggleFavorite = async () => {
+    if (!page) return;
+    const isFavorite = !page.isFavorite;
+    try {
+      await apiFetch(`/api/pages/${pageId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...page, isFavorite })
+      });
+      setPage({ ...page, isFavorite });
+      window.dispatchEvent(new CustomEvent('pages-changed'));
+    } catch (error) {
+      console.error('Failed to toggle favorite:', error);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
@@ -71,7 +88,16 @@ const PageDetailView: React.FC<PageDetailViewProps> = ({ pageId, onBack }) => {
         >
           <ArrowLeft size={20} />
         </button>
-        <h1 className="text-xl font-bold text-slate-900">{renderPropertyValue(page.title)}</h1>
+        <div className="flex flex-col">
+          <Breadcrumbs pageId={pageId} onNavigate={onNavigate || (() => {})} />
+          <h1 className="text-xl font-bold text-slate-900">{renderPropertyValue(page.title)}</h1>
+        </div>
+        <button 
+          onClick={toggleFavorite}
+          className={`ml-auto p-2 rounded-full transition-colors ${page.isFavorite ? 'text-yellow-400 hover:bg-yellow-50' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
+        >
+          <Star size={20} fill={page.isFavorite ? 'currentColor' : 'none'} />
+        </button>
       </div>
       
       <div className="flex-1 overflow-y-auto bg-white">

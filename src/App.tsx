@@ -27,11 +27,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState('dashboard');
   const [currentPageId, setCurrentPageId] = useState<string | null>(null);
+  const [currentDatabaseId, setCurrentDatabaseId] = useState<string | null>(null);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'settings' | 'agents'>('settings');
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
 
   useEffect(() => {
@@ -78,12 +80,21 @@ export default function App() {
       setCurrentPageId(e.detail.id);
     };
 
+    const handleNavigateDb = (e: any) => {
+      if (e.detail?.id) {
+        setCurrentDatabaseId(e.detail.id);
+        setCurrentView('database');
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('navigate-page-full', handleNavigateFull);
+    window.addEventListener('navigate-database', handleNavigateDb);
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('navigate-page-full', handleNavigateFull);
+      window.removeEventListener('navigate-database', handleNavigateDb);
     };
   }, []);
 
@@ -93,9 +104,10 @@ export default function App() {
       setCurrentView('dashboard');
       setTimeout(() => window.dispatchEvent(new CustomEvent('navigate-dashboard', { detail: { id } })), 100);
     } else if (type === 'database') {
+      setCurrentDatabaseId(id);
       setCurrentView('database');
-      setTimeout(() => window.dispatchEvent(new CustomEvent('navigate-database', { detail: { id } })), 100);
     } else if (type === 'page') {
+      setCurrentDatabaseId(parentId || null);
       setCurrentView('database');
       setTimeout(() => window.dispatchEvent(new CustomEvent('navigate-page', { detail: { id, databaseId: parentId, page: item } })), 100);
     } else if (type === 'note') {
@@ -150,22 +162,35 @@ export default function App() {
             {currentView === 'notes' && <NotesView onEnterFocus={() => setIsFocusMode(true)} onToggleSidebar={() => setIsSidebarOpen(true)} />}
             {currentView === 'tasks' && <TasksView onToggleSidebar={() => setIsSidebarOpen(true)} />}
             {currentView === 'calendar' && <CalendarView onToggleSidebar={() => setIsSidebarOpen(true)} />}
-            {currentView === 'database' && <DatabaseView onToggleSidebar={() => setIsSidebarOpen(true)} />}
+            {currentView === 'database' && (
+              <DatabaseView 
+                databaseId={currentDatabaseId}
+                onSelectPage={(id) => {
+                  setCurrentPageId(id);
+                  setCurrentView('page');
+                }} 
+                onToggleSidebar={() => setIsSidebarOpen(true)}
+              />
+            )}
             {currentView === 'page' && currentPageId && (
               <PageDetailView 
                 pageId={currentPageId} 
                 onBack={() => setCurrentView('database')} 
+                onNavigate={(id) => setCurrentPageId(id)}
               />
             )}
           </div>
 
           {isAgentPanelOpen && (
-            <div className="fixed inset-y-0 right-0 z-[60] flex">
-              <div 
-                className="fixed inset-0 bg-black/5 backdrop-blur-[1px]" 
-                onClick={() => setIsAgentPanelOpen(false)}
+            <div className="fixed bottom-4 right-4 z-[60] w-[400px] h-[600px] rounded-2xl shadow-2xl overflow-hidden border border-slate-200">
+              <AiAgentPanel 
+                onClose={() => setIsAgentPanelOpen(false)} 
+                onOpenSettings={(tab) => {
+                  setIsAgentPanelOpen(false);
+                  setIsSettingsOpen(true);
+                  setSettingsInitialTab(tab);
+                }}
               />
-              <AiAgentPanel onClose={() => setIsAgentPanelOpen(false)} />
             </div>
           )}
 
@@ -178,6 +203,7 @@ export default function App() {
         <SettingsModal 
           isOpen={isSettingsOpen} 
           onClose={() => setIsSettingsOpen(false)} 
+          initialTab={settingsInitialTab}
         />
         
         <GlobalModals />

@@ -1,6 +1,16 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const getApiKey = () => {
+  if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
+    return process.env.GEMINI_API_KEY;
+  }
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
+    return import.meta.env.VITE_GEMINI_API_KEY;
+  }
+  return "";
+};
+
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 export async function generateAIResponse(prompt: string, systemInstruction?: string) {
   try {
@@ -28,6 +38,8 @@ export async function processBlocksWithAI(content: string, action: string) {
     explain: "Explain the following text in simple terms.",
     fix_grammar: "Fix any grammar and spelling mistakes in the following text.",
     change_tone: "Change the tone of the following text to be more friendly and approachable.",
+    improve: "Improve the writing of the following text, making it flow better and fixing any awkward phrasing while keeping the original meaning.",
+    professional: "Rewrite the following text to sound highly professional, formal, and suitable for a business context.",
   };
 
   const instruction = systemInstructions[action] || "Process the following text.";

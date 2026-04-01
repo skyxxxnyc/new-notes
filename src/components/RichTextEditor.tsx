@@ -581,6 +581,21 @@ export default function RichTextEditor({
           <>
             <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }} className="flex bg-white border border-slate-200 rounded-lg shadow-xl p-1 gap-1 overflow-hidden">
               <button
+                onClick={() => handleAiAction('improve')}
+                className="p-1.5 rounded hover:bg-slate-100 text-primary transition-colors flex items-center gap-1"
+                title="Improve Writing"
+              >
+                <Sparkles size={14} />
+              </button>
+              <button
+                onClick={() => handleAiAction('professional')}
+                className="p-1.5 rounded hover:bg-slate-100 text-primary transition-colors flex items-center gap-1"
+                title="Make Professional"
+              >
+                <Wand2 size={14} />
+              </button>
+              <div className="w-px bg-slate-200 mx-1 my-1" />
+              <button
                 onClick={() => editor.chain().focus().toggleBold().run()}
                 className={`p-1.5 rounded hover:bg-slate-100 transition-colors ${editor.isActive('bold') ? 'bg-slate-200 text-slate-900' : 'text-slate-600'}`}
                 title="Bold"

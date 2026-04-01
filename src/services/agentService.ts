@@ -72,6 +72,47 @@ const searchTool: FunctionDeclaration = {
   }
 };
 
+const createDatabaseTool: FunctionDeclaration = {
+  name: "create_database",
+  description: "Create a new database",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      name: { type: Type.STRING, description: "The name of the database" },
+      icon: { type: Type.STRING, description: "An icon name (e.g. Database, List, Calendar)" },
+      columns: { 
+        type: Type.ARRAY, 
+        description: "Array of column definitions",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            name: { type: Type.STRING },
+            type: { type: Type.STRING, description: "text, select, date, number, checkbox, url" }
+          }
+        }
+      }
+    },
+    required: ["name"]
+  }
+};
+
+const createPageTool: FunctionDeclaration = {
+  name: "create_page",
+  description: "Create a new page in a database or as a subpage",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING, description: "The title of the page" },
+      content: { type: Type.STRING, description: "The content of the page in markdown" },
+      databaseId: { type: Type.STRING, description: "The ID of the database to create the page in" },
+      parentId: { type: Type.STRING, description: "The ID of the parent page, if it's a subpage" },
+      properties: { type: Type.STRING, description: "JSON string of properties matching the database columns" }
+    },
+    required: ["title", "databaseId"]
+  }
+};
+
 export class AgentService {
   private agent: Agent;
 
@@ -83,7 +124,11 @@ export class AgentService {
     const functionDeclarations = [];
     if (this.agent.tools?.includes('read')) functionDeclarations.push(readTool);
     if (this.agent.tools?.includes('query')) functionDeclarations.push(queryTool);
-    if (this.agent.tools?.includes('write')) functionDeclarations.push(writeTool);
+    if (this.agent.tools?.includes('write')) {
+      functionDeclarations.push(writeTool);
+      functionDeclarations.push(createDatabaseTool);
+      functionDeclarations.push(createPageTool);
+    }
     if (this.agent.tools?.includes('search')) functionDeclarations.push(searchTool);
 
     const tools: any[] = [];
@@ -119,17 +164,44 @@ export class AgentService {
       const toolResults = [];
       for (const call of functionCalls) {
         let result;
-        if (call.name === 'read_page') {
-          result = await apiFetch(`/api/pages/${call.args.pageId}`);
-        } else if (call.name === 'query_database') {
-          result = await apiFetch(`/api/pages?databaseId=${call.args.databaseId}`);
-        } else if (call.name === 'update_page') {
-          result = await apiFetch(`/api/pages/${call.args.pageId}`, {
-            method: 'PUT',
-            body: JSON.stringify(call.args)
-          });
-        } else if (call.name === 'search_workspace') {
-          result = await apiFetch(`/api/search?q=${call.args.query}`);
+        try {
+          if (call.name === 'read_page') {
+            result = await apiFetch(`/api/pages/${call.args.pageId}`);
+          } else if (call.name === 'query_database') {
+            result = await apiFetch(`/api/pages?databaseId=${call.args.databaseId}`);
+          } else if (call.name === 'update_page') {
+            result = await apiFetch(`/api/pages/${call.args.pageId}`, {
+              method: 'PUT',
+              body: JSON.stringify(call.args)
+            });
+            window.dispatchEvent(new CustomEvent('pages-changed'));
+          } else if (call.name === 'search_workspace') {
+            result = await apiFetch(`/api/search?q=${call.args.query}`);
+          } else if (call.name === 'create_database') {
+            result = await apiFetch(`/api/databases`, {
+              method: 'POST',
+              body: JSON.stringify({
+                name: call.args.name,
+                icon: call.args.icon || 'Database',
+                columns: call.args.columns ? JSON.stringify(call.args.columns) : undefined
+              })
+            });
+            window.dispatchEvent(new CustomEvent('databases-changed'));
+          } else if (call.name === 'create_page') {
+            result = await apiFetch(`/api/pages`, {
+              method: 'POST',
+              body: JSON.stringify({
+                title: call.args.title,
+                content: call.args.content || '',
+                databaseId: call.args.databaseId,
+                parentId: call.args.parentId || null,
+                properties: call.args.properties || '{}'
+              })
+            });
+            window.dispatchEvent(new CustomEvent('pages-changed'));
+          }
+        } catch (e: any) {
+          result = { error: e.message };
         }
         toolResults.push({ name: call.name, response: result });
       }
@@ -139,8 +211,8 @@ export class AgentService {
         model: "gemini-3-flash-preview",
         contents: [
           ...contents,
-          { role: 'model', parts: [{ functionCall: functionCalls[0] }] }, // Simplified for one call
-          { role: 'user', parts: [{ functionResponse: toolResults[0] }] }
+          { role: 'model', parts: functionCalls.map(call => ({ functionCall: call })) },
+          { role: 'user', parts: toolResults.map(res => ({ functionResponse: res })) }
         ] as any,
         config: {
           tools: tools.length > 0 ? tools : undefined,

@@ -1,19 +1,26 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { v4 as uuidv4 } from "uuid";
+import { generateAutofillValue } from "./serverAI";
 import "dotenv/config";
+import path from "path";
 import notionAuthRoutes from "./server/notionAuth";
 import { supabase } from "./server/supabase";
 
 const authenticate = async (req: any, res: any, next: any) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'No token provided' });
 
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return res.status(401).json({ error: 'Invalid token' });
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return res.status(401).json({ error: 'Invalid token' });
 
-  req.user = user;
-  next();
+    req.user = user;
+    next();
+  } catch (err: any) {
+    console.error('Authentication error:', err);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
 };
 
 const defaultColumns = JSON.stringify([
@@ -40,12 +47,40 @@ async function startServer() {
   // Notion Auth Routes
   app.use("/api/auth/notion", notionAuthRoutes);
 
+  const mapDatabase = (db: any) => {
+    let icon = db.icon;
+    let isFavorite = false;
+    if (icon && icon.includes("|isFavorite:")) {
+      const parts = icon.split("|isFavorite:");
+      icon = parts[0];
+      isFavorite = parts[1] === "true";
+    }
+    return { ...db, icon, isFavorite };
+  };
+
+  const mapPage = (page: any) => {
+    let isFavorite = false;
+    let isShared = false;
+    let properties = page.properties;
+    try {
+      const propsObj = JSON.parse(properties || "{}");
+      if (propsObj._isFavorite !== undefined) {
+        isFavorite = propsObj._isFavorite;
+        delete propsObj._isFavorite;
+      }
+      if (propsObj.isShared !== undefined) {
+        isShared = propsObj.isShared;
+      }
+      properties = JSON.stringify(propsObj);
+    } catch (e) {}
+    return { ...page, properties, isFavorite, isShared };
+  };
 
   // API Routes for Databases
   app.get("/api/databases", async (req: any, res) => {
     const { data, error } = await supabase.from("app_databases").select("*").eq("user_id", req.user.id);
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    res.json(data.map(mapDatabase));
   });
 
   app.post("/api/databases", async (req: any, res) => {
@@ -71,7 +106,7 @@ async function startServer() {
     ]);
     if (versionError) console.error("Failed to insert default page version:", versionError);
 
-    res.json(data);
+    res.json(mapDatabase(data));
   });
 
   app.post("/api/databases/import", async (req: any, res) => {
@@ -107,22 +142,38 @@ async function startServer() {
     
     const { data: newDb, error: fetchError } = await supabase.from("app_databases").select("*").eq("id", dbId).eq("user_id", req.user.id).single();
     if (fetchError) return res.status(500).json({ error: fetchError.message });
-    res.json(newDb);
+    res.json(mapDatabase(newDb));
   });
 
   app.put("/api/databases/:id", async (req: any, res) => {
     const { id } = req.params;
-    const { name, icon, columns } = req.body;
+    const { name, icon, columns, isFavorite } = req.body;
     
+    const { data: existing, error: fetchError } = await supabase.from("app_databases").select("*").eq("id", id).eq("user_id", req.user.id).single();
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+    let finalIcon = icon !== undefined ? icon : existing.icon;
+    let finalIsFavorite = isFavorite !== undefined ? isFavorite : false;
+    
+    if (isFavorite === undefined && existing.icon && existing.icon.includes("|isFavorite:")) {
+      finalIsFavorite = existing.icon.split("|isFavorite:")[1] === "true";
+    }
+    
+    if (finalIcon && finalIcon.includes("|isFavorite:")) {
+      finalIcon = finalIcon.split("|isFavorite:")[0];
+    }
+    
+    const dbIcon = `${finalIcon}|isFavorite:${finalIsFavorite}`;
+
     const { data, error } = await supabase.from("app_databases")
-      .update({ name, icon, columns })
+      .update({ name, icon: dbIcon, columns })
       .eq("id", id)
       .eq("user_id", req.user.id)
       .select()
       .single();
     
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    res.json(mapDatabase(data));
   });
 
   app.delete("/api/databases/:id", async (req: any, res) => {
@@ -135,23 +186,25 @@ async function startServer() {
 
   // API Routes for Pages
   app.get("/api/pages", async (req: any, res) => {
-    const { databaseId, isNote } = req.query;
+    const { databaseId, isNote, parentId } = req.query;
     let query = supabase.from("app_pages").select("*").eq("user_id", req.user.id);
     if (databaseId) {
       query = query.eq("databaseId", databaseId);
+    } else if (parentId) {
+      query = query.eq("parentId", parentId);
     } else if (isNote === 'true') {
       query = query.is("databaseId", null);
     }
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    res.json(data.map(mapPage));
   });
 
   app.get("/api/pages/:id", async (req: any, res) => {
     const { id } = req.params;
     const { data, error } = await supabase.from("app_pages").select("*").eq("id", id).eq("user_id", req.user.id).single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    res.json(mapPage(data));
   });
 
   app.post("/api/pages", async (req: any, res) => {
@@ -168,15 +221,105 @@ async function startServer() {
       { id: versionId, pageId: id, title: newPage.title, content: newPage.content, properties: newPage.properties, createdAt: new Date().toISOString(), user_id: req.user.id }
     ]);
 
-    res.json(newPage);
+    // Handle AI Autofill on_create
+    if (databaseId) {
+      try {
+        const { data: db } = await supabase.from("app_databases").select("columns, name").eq("id", databaseId).single();
+        if (db && db.columns) {
+          const columns = JSON.parse(db.columns);
+          const propsObj = JSON.parse(newPage.properties || "{}");
+          let updatedProps = { ...propsObj };
+          let hasUpdates = false;
+
+          for (const col of columns) {
+            if (col.ai_autofill && col.ai_autofill.trigger === 'on_create') {
+              const context = {
+                title: newPage.title,
+                content: newPage.content,
+                ...propsObj
+              };
+              const value = await generateAutofillValue(col.ai_autofill.prompt, context);
+              if (value) {
+                updatedProps[col.id] = value;
+                hasUpdates = true;
+              }
+            }
+          }
+
+          if (hasUpdates) {
+            const finalProps = JSON.stringify(updatedProps);
+            await supabase.from("app_pages")
+              .update({ properties: finalProps })
+              .eq("id", newPage.id)
+              .eq("user_id", req.user.id);
+            
+            // Update newPage object for the response
+            newPage.properties = finalProps;
+          }
+        }
+      } catch (e) {
+        console.error("Error processing AI autofill on create:", e);
+      }
+    }
+
+    res.json(mapPage(newPage));
+  });
+
+  app.post("/api/pages/:id/duplicate", async (req: any, res) => {
+    const { id } = req.params;
+    const { data: existing, error: fetchError } = await supabase.from("app_pages").select("*").eq("id", id).eq("user_id", req.user.id).single();
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+    const newId = uuidv4();
+    const { data: newPage, error } = await supabase.from("app_pages").insert([
+      { 
+        id: newId, 
+        title: existing.title + " (Copy)", 
+        content: existing.content, 
+        properties: existing.properties, 
+        parentId: existing.parentId, 
+        databaseId: existing.databaseId, 
+        isTemplate: existing.isTemplate, 
+        user_id: req.user.id 
+      }
+    ]).select().single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const versionId = uuidv4();
+    await supabase.from("app_page_versions").insert([
+      { id: versionId, pageId: newId, title: newPage.title, content: newPage.content, properties: newPage.properties, createdAt: new Date().toISOString(), user_id: req.user.id }
+    ]);
+
+    res.json(mapPage(newPage));
   });
 
   app.put("/api/pages/:id", async (req: any, res) => {
     const { id } = req.params;
-    const { title, content, properties, parentId, databaseId, isTemplate } = req.body;
+    const { title, content, properties, parentId, databaseId, isTemplate, isFavorite } = req.body;
     
+    // Fetch existing
+    const { data: existing, error: fetchError } = await supabase.from("app_pages").select("*").eq("id", id).eq("user_id", req.user.id).single();
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+    let finalProperties = properties !== undefined ? properties : existing.properties;
+    let finalIsFavorite = isFavorite !== undefined ? isFavorite : false;
+    
+    if (isFavorite === undefined) {
+      try {
+        const existingProps = JSON.parse(existing.properties || "{}");
+        finalIsFavorite = existingProps._isFavorite || false;
+      } catch (e) {}
+    }
+
+    try {
+      const propsObj = JSON.parse(finalProperties || "{}");
+      propsObj._isFavorite = finalIsFavorite;
+      finalProperties = JSON.stringify(propsObj);
+    } catch (e) {}
+
     const { data: updatedPage, error } = await supabase.from("app_pages")
-      .update({ title, content, properties, parentId, databaseId, isTemplate: isTemplate !== undefined ? (isTemplate ? 1 : 0) : undefined })
+      .update({ title, content, properties: finalProperties, parentId, databaseId, isTemplate: isTemplate !== undefined ? (isTemplate ? 1 : 0) : undefined })
       .eq("id", id)
       .eq("user_id", req.user.id)
       .select()
@@ -184,12 +327,98 @@ async function startServer() {
     
     if (error) return res.status(500).json({ error: error.message });
 
+    // Handle AI Autofill on_update
+    if (updatedPage.databaseId) {
+      try {
+        const { data: db } = await supabase.from("app_databases").select("columns").eq("id", updatedPage.databaseId).single();
+        if (db && db.columns) {
+          const columns = JSON.parse(db.columns);
+          const propsObj = JSON.parse(updatedPage.properties || "{}");
+          let updatedProps = { ...propsObj };
+          let hasUpdates = false;
+
+          // Check if properties, content, or title changed
+          const titleChanged = title !== undefined && title !== existing.title;
+          const contentChanged = content !== undefined && content !== existing.content;
+          
+          let changedProps: string[] = [];
+          if (titleChanged) changedProps.push('title');
+          if (contentChanged) changedProps.push('content');
+          
+          if (properties !== undefined && properties !== existing.properties) {
+            const oldProps = JSON.parse(existing.properties || "{}");
+            const newProps = JSON.parse(properties || "{}");
+            for (const key in newProps) {
+              if (newProps[key] !== oldProps[key]) {
+                changedProps.push(key);
+              }
+            }
+          }
+
+          if (changedProps.length > 0) {
+            const autofillCols = columns.filter((c: any) => c.ai_autofill && c.ai_autofill.trigger === 'on_update');
+            
+            // Filter out columns that were just updated to prevent infinite loops
+            const updatedPropsInRequest = properties ? JSON.parse(properties) : {};
+            const colsToTrigger = autofillCols.filter((col: any) => {
+              if (updatedPropsInRequest.hasOwnProperty(col.id)) return false;
+              
+              const sources = col.ai_autofill.source_properties || [];
+              if (sources.length === 0) return true; // Trigger on any change if no sources specified
+              
+              return changedProps.some(prop => sources.includes(prop));
+            });
+
+            for (const col of colsToTrigger) {
+              const context = {
+                title: updatedPage.title,
+                content: updatedPage.content,
+                ...propsObj
+              };
+              const value = await generateAutofillValue(col.ai_autofill.prompt, context);
+              if (value) {
+                updatedProps[col.id] = value;
+                hasUpdates = true;
+              }
+            }
+
+            if (hasUpdates) {
+              const finalProps = JSON.stringify(updatedProps);
+              await supabase.from("app_pages")
+                .update({ properties: finalProps })
+                .eq("id", id)
+                .eq("user_id", req.user.id);
+              
+              // Update updatedPage object for the response
+              updatedPage.properties = finalProps;
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Error processing AI autofill on update:", e);
+      }
+    }
+
     const versionId = uuidv4();
     await supabase.from("app_page_versions").insert([
       { id: versionId, pageId: id, title: updatedPage.title, content: updatedPage.content, properties: updatedPage.properties, createdAt: new Date().toISOString(), user_id: req.user.id }
     ]);
 
-    res.json(updatedPage);
+    res.json(mapPage(updatedPage));
+  });
+
+  app.get("/api/pages/:id/ancestors", async (req: any, res) => {
+    const { id } = req.params;
+    const ancestors = [];
+    let currentId = id;
+
+    while (currentId) {
+      const { data, error } = await supabase.from("app_pages").select("id, title, parentId").eq("id", currentId).eq("user_id", req.user.id).single();
+      if (error || !data) break;
+      ancestors.unshift({ id: data.id, title: data.title });
+      currentId = data.parentId;
+    }
+    res.json(ancestors);
   });
 
   app.get("/api/pages/:id/versions", async (req: any, res) => {
@@ -261,8 +490,8 @@ async function startServer() {
     ]);
     
     res.json({ 
-      databases: dbRes.data || [], 
-      pages: pageRes.data || [], 
+      databases: (dbRes.data || []).map(mapDatabase), 
+      pages: (pageRes.data || []).map(mapPage), 
       dashboards: dashRes.data || [] 
     });
   });
@@ -420,6 +649,12 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
@@ -427,4 +662,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});
